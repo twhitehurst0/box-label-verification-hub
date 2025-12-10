@@ -241,31 +241,7 @@ export function CvatUploader() {
       />
 
       {/* Content */}
-      <div className="relative z-10 mx-auto max-w-4xl px-6 py-12">
-        {/* Header */}
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-          className="mb-12"
-        >
-          <h1
-            className="text-4xl font-bold tracking-tight mb-2"
-            style={{
-              fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
-              background: `linear-gradient(135deg, #ffffff 0%, ${ACCENT_COLOR} 100%)`,
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              backgroundClip: "text",
-            }}
-          >
-            CVAT → Roboflow
-          </h1>
-          <p className="text-white/50 text-lg">
-            Upload annotated datasets from S3 to Roboflow projects
-          </p>
-        </motion.div>
-
+      <div className="relative z-10 mx-auto max-w-4xl px-6 py-8">
         {/* Error display */}
         <AnimatePresence>
           {error && (
