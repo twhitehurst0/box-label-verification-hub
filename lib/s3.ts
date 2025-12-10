@@ -53,6 +53,9 @@ export async function listVersions(): Promise<S3Version[]> {
 }
 
 // List dataset folders within a version's final/ directory
+// Handles two structures:
+// 1. version/final/dataset-name/annotations.json (multiple datasets)
+// 2. version/final/annotations.json (single dataset - treat final/ as the dataset)
 export async function listDatasets(version: string): Promise<S3Dataset[]> {
   const client = getS3Client()
 
@@ -67,6 +70,22 @@ export async function listDatasets(version: string): Promise<S3Dataset[]> {
 
   const response = await client.send(command)
 
+  // Check if annotations.json exists directly in final/ (single dataset structure)
+  const hasDirectAnnotations = (response.Contents || []).some(
+    (obj) => obj.Key === `${prefix}annotations.json`
+  )
+
+  if (hasDirectAnnotations) {
+    // Single dataset structure - treat final/ itself as the dataset
+    return [
+      {
+        name: "default",
+        path: prefix,
+      },
+    ]
+  }
+
+  // Multiple datasets structure - list subfolders
   const datasets: S3Dataset[] = (response.CommonPrefixes || [])
     .map((prefixObj) => {
       const fullPath = prefixObj.Prefix || ""
@@ -77,7 +96,7 @@ export async function listDatasets(version: string): Promise<S3Dataset[]> {
         path: fullPath,
       }
     })
-    .filter((d) => d.name.length > 0)
+    .filter((d) => d.name.length > 0 && d.name !== "images") // Exclude images folder
     .sort((a, b) => a.name.localeCompare(b.name))
 
   return datasets
@@ -90,7 +109,10 @@ export async function getDatasetAnnotations(
 ): Promise<COCOAnnotations> {
   const client = getS3Client()
 
-  const key = `${S3_BASE_PREFIX}${version}/final/${dataset}/annotations.json`
+  // Handle "default" dataset (when annotations.json is directly in final/)
+  const key = dataset === "default"
+    ? `${S3_BASE_PREFIX}${version}/final/annotations.json`
+    : `${S3_BASE_PREFIX}${version}/final/${dataset}/annotations.json`
 
   const command = new GetObjectCommand({
     Bucket: S3_BUCKET,
@@ -161,7 +183,10 @@ export async function listDatasetImages(
 ): Promise<string[]> {
   const client = getS3Client()
 
-  const prefix = `${S3_BASE_PREFIX}${version}/final/${dataset}/images/`
+  // Handle "default" dataset (when images/ is directly in final/)
+  const prefix = dataset === "default"
+    ? `${S3_BASE_PREFIX}${version}/final/images/`
+    : `${S3_BASE_PREFIX}${version}/final/${dataset}/images/`
 
   const command = new ListObjectsV2Command({
     Bucket: S3_BUCKET,

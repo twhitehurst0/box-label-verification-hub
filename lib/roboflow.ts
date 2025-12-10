@@ -60,7 +60,7 @@ export async function uploadImage(
   projectId: string,
   imageBuffer: Buffer,
   imageName: string,
-  annotationJson: string
+  annotationData: { yoloTxt: string; labelmap: Record<string, string> }
 ): Promise<{ success: boolean; id?: string; error?: string }> {
   const apiKey = getApiKey()
 
@@ -95,15 +95,20 @@ export async function uploadImage(
     return { success: false, error: "No image ID returned from upload" }
   }
 
-  // Upload annotation for the image
-  const annotationUrl = `${ROBOFLOW_API_BASE}/dataset/${projectName}/annotate/${imageId}?api_key=${apiKey}`
+  // Upload annotation for the image using Darknet TXT format with labelmap
+  const annotationUrl = `${ROBOFLOW_API_BASE}/dataset/${projectName}/annotate/${imageId}?api_key=${apiKey}&name=${encodeURIComponent(imageName.replace(/\.(png|jpg|jpeg)$/i, '.txt'))}`
+
+  const annotationBody = JSON.stringify({
+    annotationFile: annotationData.yoloTxt,
+    labelmap: annotationData.labelmap,
+  })
 
   const annotationResponse = await fetch(annotationUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: annotationJson,
+    body: annotationBody,
   })
 
   if (!annotationResponse.ok) {
@@ -118,8 +123,9 @@ export async function uploadImage(
   return { success: true, id: imageId }
 }
 
-// Convert COCO format annotation for a single image to Roboflow format
-export function cocoToRoboflowAnnotation(
+// Convert COCO format annotation for a single image to YOLO Darknet TXT format
+// YOLO format: class_idx x_center y_center width height (all normalized 0-1)
+export function cocoToYoloAnnotation(
   imageId: number,
   cocoAnnotations: {
     annotations: Array<{
@@ -129,9 +135,9 @@ export function cocoToRoboflowAnnotation(
       bbox: [number, number, number, number]
     }>
     categories: Array<{ id: number; name: string }>
-    images: Array<{ id: number; width: number; height: number }>
+    images: Array<{ id: number; width: number; height: number; file_name: string }>
   }
-): string {
+): { yoloTxt: string; labelmap: Record<string, string> } {
   const image = cocoAnnotations.images.find((img) => img.id === imageId)
   if (!image) {
     throw new Error(`Image with id ${imageId} not found`)
@@ -141,29 +147,31 @@ export function cocoToRoboflowAnnotation(
     (ann) => ann.image_id === imageId
   )
 
-  const categoryMap = new Map(
-    cocoAnnotations.categories.map((cat) => [cat.id, cat.name])
-  )
+  // Build labelmap: { "0": "class_name", "1": "another_class", ... }
+  const labelmap: Record<string, string> = {}
+  const categoryIdToIndex = new Map<number, number>()
 
-  // Convert to Roboflow annotation format
-  const roboflowAnnotations = imageAnnotations.map((ann) => {
+  cocoAnnotations.categories.forEach((cat, idx) => {
+    labelmap[String(idx)] = cat.name
+    categoryIdToIndex.set(cat.id, idx)
+  })
+
+  // Convert each annotation to YOLO format line
+  const yoloLines = imageAnnotations.map((ann) => {
     const [x, y, width, height] = ann.bbox
-    const className = categoryMap.get(ann.category_id) || "unknown"
+    const classIdx = categoryIdToIndex.get(ann.category_id) ?? 0
 
-    return {
-      x: x + width / 2, // Convert to center x
-      y: y + height / 2, // Convert to center y
-      width,
-      height,
-      class: className,
-    }
+    // Normalize coordinates to 0-1 range
+    const xCenter = (x + width / 2) / image.width
+    const yCenter = (y + height / 2) / image.height
+    const normWidth = width / image.width
+    const normHeight = height / image.height
+
+    return `${classIdx} ${xCenter.toFixed(6)} ${yCenter.toFixed(6)} ${normWidth.toFixed(6)} ${normHeight.toFixed(6)}`
   })
 
-  return JSON.stringify({
-    image: {
-      width: image.width,
-      height: image.height,
-    },
-    annotations: roboflowAnnotations,
-  })
+  return {
+    yoloTxt: yoloLines.join('\n'),
+    labelmap,
+  }
 }

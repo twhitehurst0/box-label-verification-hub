@@ -82,7 +82,7 @@ export function CvatUploader() {
     fetchProjects()
   }, [])
 
-  // Fetch datasets when version changes
+  // Fetch datasets when version changes and auto-select "default"
   useEffect(() => {
     if (!selectedVersion) {
       setDatasets([])
@@ -99,7 +99,13 @@ export function CvatUploader() {
         const res = await fetch(`/api/s3/datasets?version=${encodeURIComponent(selectedVersion!)}`)
         const data = await res.json()
         if (data.error) throw new Error(data.error)
-        setDatasets(data.datasets || [])
+        const fetchedDatasets = data.datasets || []
+        setDatasets(fetchedDatasets)
+        // Auto-select "default" dataset if it exists
+        const defaultDataset = fetchedDatasets.find((d: S3Dataset) => d.name === "default")
+        if (defaultDataset) {
+          setSelectedDataset("default")
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load datasets")
       } finally {
@@ -288,23 +294,14 @@ export function CvatUploader() {
           className="mb-8"
         >
           <GlassCard title="S3 Source" accentColor={ACCENT_COLOR}>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <VersionSelector
-                versions={versions}
-                selectedVersion={selectedVersion}
-                onSelect={setSelectedVersion}
-                loading={loadingVersions}
-                accentColor={ACCENT_COLOR}
-              />
-              <DatasetSelector
-                datasets={datasets}
-                selectedDataset={selectedDataset}
-                onSelect={setSelectedDataset}
-                loading={loadingDatasets}
-                disabled={!selectedVersion}
-                accentColor={ACCENT_COLOR}
-              />
-            </div>
+            <VersionSelector
+              versions={versions}
+              selectedVersion={selectedVersion}
+              onSelect={setSelectedVersion}
+              loading={loadingVersions}
+              accentColor={ACCENT_COLOR}
+              label="Dataset Version"
+            />
           </GlassCard>
         </motion.div>
 
@@ -376,10 +373,10 @@ function GlassCard({
   accentColor: string
 }) {
   return (
-    <div className="relative overflow-hidden rounded-2xl">
+    <div className="relative rounded-2xl">
       {/* Glass background */}
       <div
-        className="absolute inset-0"
+        className="absolute inset-0 rounded-2xl overflow-hidden"
         style={{
           background: `linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 50%, rgba(255,255,255,0.06) 100%)`,
           backdropFilter: "blur(24px) saturate(180%)",
@@ -389,7 +386,7 @@ function GlassCard({
 
       {/* Border glow */}
       <div
-        className="absolute inset-0 rounded-2xl"
+        className="absolute inset-0 rounded-2xl pointer-events-none"
         style={{
           border: "1px solid rgba(255,255,255,0.12)",
           boxShadow: `0 8px 32px rgba(0,0,0,0.3), inset 0 1px 1px rgba(255,255,255,0.15)`,
@@ -398,7 +395,7 @@ function GlassCard({
 
       {/* Top highlight */}
       <div
-        className="absolute inset-x-0 top-0 h-px"
+        className="absolute inset-x-0 top-0 h-px rounded-t-2xl pointer-events-none"
         style={{
           background: `linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%)`,
         }}

@@ -4,7 +4,7 @@ import {
   listDatasetImages,
   getImage,
 } from "@/lib/s3"
-import { uploadImage, cocoToRoboflowAnnotation } from "@/lib/roboflow"
+import { uploadImage, cocoToYoloAnnotation } from "@/lib/roboflow"
 import type { UploadRequest, UploadResponse } from "@/types/ocr"
 
 export async function POST(request: NextRequest) {
@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Fetch annotations from S3
+    // Fetch annotations from S3 (COCO JSON format)
     const annotations = await getDatasetAnnotations(version, dataset)
 
     // List all images in the dataset
@@ -51,15 +51,15 @@ export async function POST(request: NextRequest) {
         // Get image buffer from S3
         const imageBuffer = await getImage(imageKey)
 
-        // Convert COCO annotation to Roboflow format
-        const annotationJson = cocoToRoboflowAnnotation(imageId, annotations)
+        // Convert COCO annotation to YOLO format (Roboflow REST API accepts this)
+        const annotationData = cocoToYoloAnnotation(imageId, annotations)
 
         // Upload to Roboflow
         const result = await uploadImage(
           projectId,
           imageBuffer,
           filename,
-          annotationJson
+          annotationData
         )
 
         if (result.success) {

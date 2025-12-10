@@ -48,16 +48,13 @@ export function DatasetPreview({
 
       {/* Content */}
       <div className="relative z-10 p-6">
-        <div className="flex items-center justify-between mb-4">
+        <div className="mb-4">
           <h2
             className="text-xs font-semibold uppercase tracking-widest"
             style={{ color: accentColor }}
           >
             Dataset Preview
           </h2>
-          {datasetName && (
-            <span className="text-white/60 text-sm font-medium">{datasetName}</span>
-          )}
         </div>
 
         {loading ? (

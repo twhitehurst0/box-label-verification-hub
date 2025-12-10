@@ -10,6 +10,7 @@ interface VersionSelectorProps {
   onSelect: (version: string | null) => void
   loading: boolean
   accentColor: string
+  label?: string
 }
 
 export function VersionSelector({
@@ -18,6 +19,7 @@ export function VersionSelector({
   onSelect,
   loading,
   accentColor,
+  label = "Version",
 }: VersionSelectorProps) {
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
@@ -37,8 +39,8 @@ export function VersionSelector({
 
   return (
     <div ref={dropdownRef} className="relative">
-      <label className="block text-white/40 text-xs font-medium mb-2 uppercase tracking-wider">
-        Version
+      <label className="block text-white/40 text-xs font-medium mb-2 uppercase tracking-wider text-center">
+        {label}
       </label>
 
       {/* Dropdown trigger */}
@@ -60,7 +62,7 @@ export function VersionSelector({
               : `0 2px 10px rgba(0,0,0,0.1)`,
           }}
         >
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-center">
             {loading ? (
               <div className="flex items-center gap-2">
                 <motion.div
@@ -69,15 +71,15 @@ export function VersionSelector({
                   animate={{ rotate: 360 }}
                   transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                 />
-                <span className="text-white/40 text-sm">Loading versions...</span>
+                <span className="text-white/40 text-sm">Loading...</span>
               </div>
             ) : (
-              <>
+              <div className="flex items-center gap-2">
                 <span
                   className={`text-sm ${selectedVersion ? "text-white" : "text-white/40"}`}
                   style={selectedVersion ? { textShadow: `0 0 20px ${accentColor}40` } : {}}
                 >
-                  {selectedVersionData?.name || "Select version"}
+                  {selectedVersionData?.name || "Select dataset version"}
                 </span>
                 <motion.svg
                   width="16"
@@ -95,7 +97,7 @@ export function VersionSelector({
                     strokeLinejoin="round"
                   />
                 </motion.svg>
-              </>
+              </div>
             )}
           </div>
         </div>
