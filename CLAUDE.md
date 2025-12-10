@@ -1,119 +1,74 @@
 # CLAUDE.md
 
-Development guidelines for Claude Code when working with this repository.
-
-## Project Overview
-
-Unified Next.js application for Flovision Box Label Verification featuring 3D interactive components (React Three Fiber) and 2D animations (Framer Motion).
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Commands
 
 ```bash
-pnpm install      # Install dependencies
-pnpm dev          # Start dev server (localhost:3000)
-pnpm build        # Production build
-pnpm lint         # Run ESLint
+pnpm install          # Install dependencies
+pnpm dev              # Start dev server (localhost:3000)
+pnpm dev --port 3007  # Run on specific port
+pnpm build            # Production build
+pnpm lint             # Run ESLint
+npx tsc --noEmit      # Type check
 ```
 
-## Routes
+## Architecture
 
-| Route | Components Used |
-|-------|-----------------|
-| `/` | Landing page with navigation |
-| `/cosmos` | ParticleSphere, HolographicText, EnterButtonIndustrial, RocketOrbit3D |
-| `/button` | AnimatedButton, EnterButton |
-| `/vercel-button` | Vercel3DButton |
+Next.js 15.1 app with React 19 featuring 3D components (React Three Fiber) and 2D animations (Framer Motion).
 
-## Component Reference
+### Routes
 
-### Cosmos Components (`components/cosmos/`)
+- `/` - Landing page with navigation
+- `/cosmos` - 3D particle sphere gallery with video textures
+- `/button` - Industrial-style 2D animated buttons
+- `/vercel-button` - 3D button configurator with controls
 
-| Component | Purpose |
-|-----------|---------|
-| `particle-sphere.tsx` | 1500 particles + 24 orbiting video planes |
-| `holographic-text.tsx` | Chromatic aberration text with parallax |
-| `enter-button-industrial.tsx` | Floating industrial button (Framer Motion) |
-| `enter-button-3d.tsx` | Cosmic 3D button with color cycling |
-| `rocket-orbit-3d.tsx` | 6 rockets on elliptical orbits |
+### Component Organization
 
-### Button Components (`components/button/`)
+- `components/cosmos/` - 3D gallery components (ParticleSphere, HolographicText, RocketOrbit3D)
+- `components/button/` - 2D animated button components
+- `components/vercel-button/` - 3D button editor
+- `components/ui/` - shadcn/ui primitives (new-york style)
 
-| Component | Purpose |
-|-----------|---------|
-| `animated-button.tsx` | Industrial toggle switch with filaments |
-| `enter-button.tsx` | Industrial Enter button (full-screen) |
+## Key Patterns
 
-### Vercel Button (`components/vercel-button/`)
+### Client Components
+All R3F and Framer Motion components must use `"use client"` directive.
 
-| Component | Purpose |
-|-----------|---------|
-| `vercel-3d-button.tsx` | 3D button editor with control panel |
-
-## Tech Stack
-
-- **Framework**: Next.js 15.1, React 19, TypeScript
-- **3D**: @react-three/fiber, @react-three/drei, three
-- **Animation**: framer-motion
-- **Styling**: Tailwind CSS v4, shadcn/ui (new-york style)
-
-## Code Patterns
-
-### Video Textures (ParticleSphere)
-
+### Three.js Video Textures
 ```tsx
 const videoTextures = useMemo(() => {
-  videoFiles.forEach((videoFile) => {
-    const video = document.createElement("video")
-    video.src = videoFile
-    video.autoplay = true
-    video.muted = true
-    video.loop = true
-    const texture = new THREE.VideoTexture(video)
-    textures.push(texture)
-  })
-  return textures
+  const video = document.createElement("video")
+  video.src = videoFile
+  video.autoplay = true
+  video.muted = true
+  video.loop = true
+  return new THREE.VideoTexture(video)
 }, [])
 ```
 
-### 3D Animation (useFrame)
-
+### R3F Animation Loop
 ```tsx
 useFrame((state, delta) => {
-  const lerpSpeed = 12 * delta
-  current.current = THREE.MathUtils.lerp(current.current, target.current, lerpSpeed)
-  meshRef.current.position.y = current.current
+  meshRef.current.rotation.y += delta * 0.5
 })
 ```
 
-### Framer Motion Animation
-
+### SSR Handling
+Use `mounted` state to prevent Canvas hydration issues:
 ```tsx
-<motion.div
-  animate={{
-    y: isHovered ? 0 : [0, -8, 0],
-    scale: isPressed ? 0.96 : 1,
-  }}
-  transition={{
-    y: { duration: 3, ease: "easeInOut", repeat: Infinity },
-  }}
-/>
+const [mounted, setMounted] = useState(false)
+useEffect(() => setMounted(true), [])
+if (!mounted) return null
 ```
 
-## File Locations
+## Assets
 
-- **Videos**: `/public/videos/vid1.mp4` - `/public/videos/vid10.mp4`
-- **Fonts**: `/public/fonts/Inter_Bold.json` (Three.js typeface)
-- **UI Components**: `/components/ui/` (shadcn/ui)
-- **Utilities**: `/lib/utils.ts`
+- Videos: `/public/videos/vid1.mp4` - `/public/videos/vid10.mp4`
+- Fonts: `/public/fonts/Inter_Bold.json` (Three.js typeface)
 
-## Color Theme
+## Styling
 
-Industrial button accent: `#ff8800` (orange)
-
-## Best Practices
-
-1. Use `"use client"` for R3F and Framer Motion components
-2. Memoize Three.js geometries with `useMemo`
-3. Use refs for direct mesh manipulation
-4. Handle SSR with `mounted` state for Canvas
-5. Keep video textures in `/public/videos/`
+- Tailwind CSS v4 with `@/*` path alias
+- Industrial theme accent: `#ff8800`

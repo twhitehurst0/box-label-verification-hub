@@ -52,11 +52,28 @@ export function ParticleSphere() {
       "/videos/vid8.mp4",
       "/videos/vid9.mp4",
       "/videos/vid10.mp4",
+      "/videos/vid11.mp4",
+      "/videos/vid12.mp4",
+      "/videos/vid13.mp4",
+      "/videos/vid14.mp4",
+      "/videos/vid15.mp4",
+      "/videos/vid16.mp4",
+      "/videos/vid17.mp4",
+      "/videos/vid18.mp4",
+      "/videos/vid19.mp4",
+      "/videos/vid20.mp4",
+      "/videos/vid21.mp4",
+      "/videos/vid22.mp4",
+      "/videos/vid23.mp4",
+      "/videos/vid24.mp4",
     ]
+
+    // Shuffle the video files randomly
+    const shuffled = [...videoFiles].sort(() => Math.random() - 0.5)
 
     const textures: THREE.VideoTexture[] = []
 
-    videoFiles.forEach((videoFile) => {
+    shuffled.forEach((videoFile) => {
       const video = document.createElement("video")
       video.src = videoFile
       video.autoplay = true

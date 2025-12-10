@@ -27,11 +27,17 @@
 import { motion } from "framer-motion"
 import type React from "react"
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 
-export function EnterButtonIndustrial() {
+interface EnterButtonIndustrialProps {
+  href?: string
+}
+
+export function EnterButtonIndustrial({ href }: EnterButtonIndustrialProps) {
   const [isPressed, setIsPressed] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const router = useRouter()
 
   useEffect(() => {
     setMounted(true)
@@ -39,7 +45,14 @@ export function EnterButtonIndustrial() {
 
   const handleClick = () => {
     setIsPressed(true)
-    setTimeout(() => setIsPressed(false), 600)
+    if (href) {
+      setTimeout(() => {
+        router.push(href)
+      }, 400)
+    }
+    setTimeout(() => {
+      setIsPressed(false)
+    }, 600)
   }
 
   if (!mounted) {
@@ -47,7 +60,7 @@ export function EnterButtonIndustrial() {
   }
 
   return (
-    <div className="relative w-full h-full flex items-center justify-center">
+    <div className="relative flex items-center justify-center">
 
       {/* Main Button Area */}
       <div
