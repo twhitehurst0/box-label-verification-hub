@@ -4,4 +4,5 @@ export interface Project {
   description: string
   video: string
   accentColor: string
+  comingSoon?: boolean
 }

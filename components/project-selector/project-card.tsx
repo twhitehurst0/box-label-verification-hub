@@ -11,9 +11,10 @@ interface ProjectCardProps {
   index: number
   currentIndex: number
   onClick?: () => void
+  onHoverChange?: (hovering: boolean) => void
 }
 
-export function ProjectCard({ project, isActive, dragOffset, index, currentIndex, onClick }: ProjectCardProps) {
+export function ProjectCard({ project, isActive, dragOffset, index, currentIndex, onClick, onHoverChange }: ProjectCardProps) {
   const [isHovered, setIsHovered] = useState(false)
   const [isPressed, setIsPressed] = useState(false)
   const [isEnterHovered, setIsEnterHovered] = useState(false)
@@ -46,10 +47,14 @@ export function ProjectCard({ project, isActive, dragOffset, index, currentIndex
         perspective: 1200,
         transformStyle: "preserve-3d",
       }}
-      onMouseEnter={() => setIsHovered(true)}
+      onMouseEnter={() => {
+        setIsHovered(true)
+        onHoverChange?.(true)
+      }}
       onMouseLeave={() => {
         setIsHovered(false)
         setIsPressed(false)
+        onHoverChange?.(false)
       }}
       onMouseDown={() => !isEnterHovered && setIsPressed(true)}
       onMouseUp={() => setIsPressed(false)}
@@ -147,93 +152,142 @@ export function ProjectCard({ project, isActive, dragOffset, index, currentIndex
                   }}
                 />
 
-                {/* Actual clickable link */}
-                <a
-                  href={projectRoute}
-                  className="relative z-10 flex items-center gap-3 px-8 py-4 rounded-full cursor-pointer"
-                  style={{
-                    pointerEvents: "auto",
-                    background: isEnterHovered
-                      ? `linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.12) 100%)`
-                      : `linear-gradient(135deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.08) 100%)`,
-                    backdropFilter: "blur(20px) saturate(180%)",
-                    WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                    border: `1px solid rgba(255,255,255,${isEnterHovered ? 0.35 : 0.2})`,
-                    boxShadow: isEnterPressed
-                      ? `inset 0 2px 15px rgba(255,255,255,0.1), 0 0 40px ${project.accentColor}20`
-                      : isEnterHovered
-                      ? `0 8px 32px rgba(0,0,0,0.3), 0 0 60px ${project.accentColor}15, inset 0 1px 1px rgba(255,255,255,0.3)`
-                      : `0 4px 24px rgba(0,0,0,0.2), inset 0 1px 1px rgba(255,255,255,0.25)`,
-                    transform: isEnterPressed ? "scale(0.96)" : isEnterHovered ? "scale(1.03) translateY(-2px)" : "scale(1)",
-                    transition: "all 0.2s ease",
-                  }}
-                  onMouseEnter={() => setIsEnterHovered(true)}
-                  onMouseLeave={() => {
-                    setIsEnterHovered(false)
-                    setIsEnterPressed(false)
-                  }}
-                  onMouseDown={(e) => {
-                    e.stopPropagation()
-                    setIsEnterPressed(true)
-                  }}
-                  onMouseUp={() => setIsEnterPressed(false)}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                  }}
-                >
-                  {/* Pulsing orb */}
-                  <motion.div
-                    className="w-2.5 h-2.5 rounded-full"
+                {/* Actual clickable button/link */}
+                {project.comingSoon ? (
+                  <div
+                    className="relative z-10 flex items-center gap-3 px-8 py-4 rounded-full cursor-default"
                     style={{
-                      background: `radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), ${project.accentColor} 60%, ${project.accentColor}80)`,
-                      boxShadow: `0 0 10px ${project.accentColor}60`,
+                      pointerEvents: "auto",
+                      background: isEnterHovered
+                        ? `linear-gradient(135deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.08) 100%)`
+                        : `linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 50%, rgba(255,255,255,0.05) 100%)`,
+                      backdropFilter: "blur(20px) saturate(180%)",
+                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                      border: `1px solid rgba(255,255,255,${isEnterHovered ? 0.25 : 0.15})`,
+                      boxShadow: `0 4px 24px rgba(0,0,0,0.2), inset 0 1px 1px rgba(255,255,255,0.2)`,
                     }}
-                    animate={{
-                      scale: [1, 1.2, 1],
-                    }}
-                    transition={{
-                      duration: 2,
-                      repeat: Infinity,
-                      ease: "easeInOut",
-                    }}
-                  />
-
-                  {/* ENTER text */}
-                  <span
-                    className="text-sm font-semibold tracking-[0.2em] uppercase"
-                    style={{
-                      fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
-                      color: isEnterHovered ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.85)",
-                      textShadow: isEnterHovered
-                        ? `0 0 20px ${project.accentColor}80, 0 1px 2px rgba(0,0,0,0.3)`
-                        : "0 1px 2px rgba(0,0,0,0.2)",
-                    }}
+                    onMouseEnter={() => setIsEnterHovered(true)}
+                    onMouseLeave={() => setIsEnterHovered(false)}
+                    onClick={(e) => e.stopPropagation()}
                   >
-                    ENTER
-                  </span>
+                    {/* Pulsing orb - slower for coming soon */}
+                    <motion.div
+                      className="w-2.5 h-2.5 rounded-full"
+                      style={{
+                        background: `radial-gradient(circle at 30% 30%, rgba(255,255,255,0.6), ${project.accentColor}60 60%, ${project.accentColor}40)`,
+                        boxShadow: `0 0 8px ${project.accentColor}40`,
+                      }}
+                      animate={{
+                        scale: [1, 1.15, 1],
+                        opacity: [0.6, 0.9, 0.6],
+                      }}
+                      transition={{
+                        duration: 3,
+                        repeat: Infinity,
+                        ease: "easeInOut",
+                      }}
+                    />
 
-                  {/* Arrow icon */}
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    className="ml-1"
+                    {/* Coming Soon text */}
+                    <span
+                      className="text-sm font-medium tracking-wide"
+                      style={{
+                        fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
+                        color: "rgba(255,255,255,0.6)",
+                        textShadow: "0 1px 2px rgba(0,0,0,0.2)",
+                      }}
+                    >
+                      Coming Soon...
+                    </span>
+                  </div>
+                ) : (
+                  <a
+                    href={projectRoute}
+                    className="relative z-10 flex items-center gap-3 px-8 py-4 rounded-full cursor-pointer"
                     style={{
-                      transform: isEnterHovered ? "translateX(3px)" : "translateX(0)",
-                      opacity: isEnterHovered ? 1 : 0.7,
+                      pointerEvents: "auto",
+                      background: isEnterHovered
+                        ? `linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.12) 100%)`
+                        : `linear-gradient(135deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.08) 100%)`,
+                      backdropFilter: "blur(20px) saturate(180%)",
+                      WebkitBackdropFilter: "blur(20px) saturate(180%)",
+                      border: `1px solid rgba(255,255,255,${isEnterHovered ? 0.35 : 0.2})`,
+                      boxShadow: isEnterPressed
+                        ? `inset 0 2px 15px rgba(255,255,255,0.1), 0 0 40px ${project.accentColor}20`
+                        : isEnterHovered
+                        ? `0 8px 32px rgba(0,0,0,0.3), 0 0 60px ${project.accentColor}15, inset 0 1px 1px rgba(255,255,255,0.3)`
+                        : `0 4px 24px rgba(0,0,0,0.2), inset 0 1px 1px rgba(255,255,255,0.25)`,
+                      transform: isEnterPressed ? "scale(0.96)" : isEnterHovered ? "scale(1.03) translateY(-2px)" : "scale(1)",
                       transition: "all 0.2s ease",
                     }}
+                    onMouseEnter={() => setIsEnterHovered(true)}
+                    onMouseLeave={() => {
+                      setIsEnterHovered(false)
+                      setIsEnterPressed(false)
+                    }}
+                    onMouseDown={(e) => {
+                      e.stopPropagation()
+                      setIsEnterPressed(true)
+                    }}
+                    onMouseUp={() => setIsEnterPressed(false)}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                    }}
                   >
-                    <path
-                      d="M3 8H13M13 8L9 4M13 8L9 12"
-                      stroke={isEnterHovered ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.7)"}
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
+                    {/* Pulsing orb */}
+                    <motion.div
+                      className="w-2.5 h-2.5 rounded-full"
+                      style={{
+                        background: `radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), ${project.accentColor} 60%, ${project.accentColor}80)`,
+                        boxShadow: `0 0 10px ${project.accentColor}60`,
+                      }}
+                      animate={{
+                        scale: [1, 1.2, 1],
+                      }}
+                      transition={{
+                        duration: 2,
+                        repeat: Infinity,
+                        ease: "easeInOut",
+                      }}
                     />
-                  </svg>
-                </a>
+
+                    {/* ENTER text */}
+                    <span
+                      className="text-sm font-semibold tracking-[0.2em] uppercase"
+                      style={{
+                        fontFamily: "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
+                        color: isEnterHovered ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.85)",
+                        textShadow: isEnterHovered
+                          ? `0 0 20px ${project.accentColor}80, 0 1px 2px rgba(0,0,0,0.3)`
+                          : "0 1px 2px rgba(0,0,0,0.2)",
+                      }}
+                    >
+                      ENTER
+                    </span>
+
+                    {/* Arrow icon */}
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      className="ml-1"
+                      style={{
+                        transform: isEnterHovered ? "translateX(3px)" : "translateX(0)",
+                        opacity: isEnterHovered ? 1 : 0.7,
+                        transition: "all 0.2s ease",
+                      }}
+                    >
+                      <path
+                        d="M3 8H13M13 8L9 4M13 8L9 12"
+                        stroke={isEnterHovered ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.7)"}
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  </a>
+                )}
               </motion.div>
             )}
           </AnimatePresence>

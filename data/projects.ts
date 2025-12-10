@@ -14,5 +14,6 @@ export const projects: Project[] = [
     description: "Object detection for box label verification and validation",
     video: "/videos/vid2.mp4",
     accentColor: "#ff6b00",
+    comingSoon: true,
   },
 ]

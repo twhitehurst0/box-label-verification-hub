@@ -10,11 +10,22 @@ import { useSliderNavigation } from "@/hooks/use-slider-navigation"
 import { useSliderDrag } from "@/hooks/use-slider-drag"
 import { useSliderWheel } from "@/hooks/use-slider-wheel"
 
-export function ProjectGallerySlider() {
+interface ProjectGallerySliderProps {
+  onCardHover?: (hovering: boolean) => void
+}
+
+export function ProjectGallerySlider({ onCardHover }: ProjectGallerySliderProps) {
   const router = useRouter()
   const sliderRef = useRef<HTMLDivElement>(null)
   const [windowWidth, setWindowWidth] = useState(0)
   const [mounted, setMounted] = useState(false)
+  const [isHovered, setIsHovered] = useState(false)
+
+  // Handle card hover
+  const handleCardHoverChange = (hovering: boolean) => {
+    setIsHovered(hovering)
+    onCardHover?.(hovering)
+  }
 
   useEffect(() => {
     setMounted(true)
@@ -69,7 +80,7 @@ export function ProjectGallerySlider() {
 
   return (
     <div className="relative h-full w-full overflow-hidden">
-      {/* Animated ambient background with smoother color transitions */}
+      {/* Transparent accent color overlay - particles show through */}
       <AnimatePresence mode="sync">
         <motion.div
           key={currentIndex}
@@ -77,35 +88,22 @@ export function ProjectGallerySlider() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.8, ease: "easeInOut" }}
-          className="absolute inset-0"
+          className="absolute inset-0 pointer-events-none"
           style={{
             background: `
-              radial-gradient(ellipse 80% 60% at 30% 20%, ${accentColor}55 0%, transparent 50%),
-              radial-gradient(ellipse 70% 50% at 70% 80%, ${accentColor}44 0%, transparent 50%),
-              radial-gradient(ellipse 100% 80% at 50% 50%, ${accentColor}22 0%, transparent 60%),
-              linear-gradient(180deg, #050505 0%, #0a0a0a 50%, #080808 100%)
+              radial-gradient(ellipse 80% 60% at 30% 20%, ${accentColor}25 0%, transparent 50%),
+              radial-gradient(ellipse 70% 50% at 70% 80%, ${accentColor}20 0%, transparent 50%)
             `,
           }}
         />
       </AnimatePresence>
 
-      {/* Subtle noise texture overlay */}
-      <div
-        className="absolute inset-0 opacity-[0.015] pointer-events-none"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-        }}
-      />
-
-      {/* Soft blur overlay for depth */}
-      <div className="absolute inset-0 backdrop-blur-3xl" />
-
-      {/* Animated gradient orbs */}
+      {/* Subtle floating accent orb */}
       <motion.div
         className="absolute w-[600px] h-[600px] rounded-full pointer-events-none"
         style={{
-          background: `radial-gradient(circle, ${accentColor}20 0%, transparent 70%)`,
-          filter: "blur(60px)",
+          background: `radial-gradient(circle, ${accentColor}15 0%, transparent 70%)`,
+          filter: "blur(80px)",
         }}
         animate={{
           x: ["-20%", "10%", "-20%"],
@@ -171,6 +169,7 @@ export function ProjectGallerySlider() {
               index={index}
               currentIndex={currentIndex}
               onClick={() => handleCardClick(index)}
+              onHoverChange={handleCardHoverChange}
             />
           ))}
         </motion.div>

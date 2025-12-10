@@ -198,40 +198,30 @@ export function CvatUploader() {
 
   return (
     <div className="relative min-h-screen w-full overflow-hidden">
-      {/* Animated ambient background */}
+      {/* Subtle accent color overlay - particles show through from parent */}
       <div
-        className="fixed inset-0"
+        className="fixed inset-0 pointer-events-none"
         style={{
           background: `
-            radial-gradient(ellipse 80% 60% at 30% 20%, ${ACCENT_COLOR}35 0%, transparent 50%),
-            radial-gradient(ellipse 70% 50% at 70% 80%, ${ACCENT_COLOR}25 0%, transparent 50%),
-            radial-gradient(ellipse 100% 80% at 50% 50%, ${ACCENT_COLOR}15 0%, transparent 60%),
-            linear-gradient(180deg, #050505 0%, #0a0a0a 50%, #080808 100%)
+            radial-gradient(ellipse 80% 60% at 30% 20%, ${ACCENT_COLOR}20 0%, transparent 50%),
+            radial-gradient(ellipse 70% 50% at 70% 80%, ${ACCENT_COLOR}15 0%, transparent 50%)
           `,
         }}
       />
 
-      {/* Noise texture */}
-      <div
-        className="fixed inset-0 opacity-[0.02] pointer-events-none"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
-        }}
-      />
-
-      {/* Animated gradient orb */}
+      {/* Floating accent orb */}
       <motion.div
         className="fixed w-[800px] h-[800px] rounded-full pointer-events-none"
         style={{
-          background: `radial-gradient(circle, ${ACCENT_COLOR}15 0%, transparent 70%)`,
-          filter: "blur(80px)",
+          background: `radial-gradient(circle, ${ACCENT_COLOR}12 0%, transparent 70%)`,
+          filter: "blur(100px)",
           left: "50%",
           top: "50%",
           transform: "translate(-50%, -50%)",
         }}
         animate={{
           scale: [1, 1.2, 1],
-          opacity: [0.4, 0.6, 0.4],
+          opacity: [0.3, 0.5, 0.3],
         }}
         transition={{
           duration: 8,
