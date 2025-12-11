@@ -22,9 +22,9 @@ import type {
   JobSummary,
 } from "@/types/model-testing"
 import { OCR_ENGINES } from "@/types/model-testing"
+import { API_BASE } from "@/lib/api-config"
 
 const ACCENT_COLOR = "#a855f7"
-const API_BASE = "http://localhost:8000"
 
 export function ModelTestingConsole() {
   const [mounted, setMounted] = useState(false)

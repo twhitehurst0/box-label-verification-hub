@@ -3,8 +3,7 @@
 import { useState, useRef, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import type { JobResults, FieldStats, ImageResult } from "@/types/model-testing"
-
-const API_BASE = "http://localhost:8000"
+import { API_BASE } from "@/lib/api-config"
 
 interface ResultsViewerProps {
   results: JobResults | null
