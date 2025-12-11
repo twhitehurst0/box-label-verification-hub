@@ -101,3 +101,6 @@ style={{
 - Industrial theme accent: `#ff8800`
 - OCR/Dataset Uploader accent: `#00d4ff`
 - Inference Testing accent: `#a855f7`
+- When doing any designing with any JS libraries use the frontend skill.
+- Create test along the way and document them to make it easier for you to test if something is actually working before resonding
+- When dealing with roboflow. Use supervision as much as you can

@@ -79,9 +79,17 @@ export function ParticleSphere() {
       video.autoplay = true
       video.muted = true
       video.loop = true
+      video.playsInline = true // Required for iOS and helps Firefox
       video.crossOrigin = "anonymous"
       video.style.display = "none"
+      video.setAttribute("playsinline", "") // Explicit attribute for broader support
+      video.setAttribute("webkit-playsinline", "") // Safari support
       document.body.appendChild(video)
+
+      // Explicitly call play() for Firefox compatibility
+      video.play().catch((err) => {
+        console.warn(`Video autoplay blocked for ${videoFile}:`, err)
+      })
 
       const texture = new THREE.VideoTexture(video)
       texture.flipY = false

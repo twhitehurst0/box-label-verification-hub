@@ -195,16 +195,16 @@ export function InferenceCard({
                   style={{
                     pointerEvents: "auto",
                     background: isEnterHovered
-                      ? `linear-gradient(135deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.12) 100%)`
-                      : `linear-gradient(135deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 50%, rgba(255,255,255,0.08) 100%)`,
+                      ? `linear-gradient(135deg, rgba(30,30,40,0.95) 0%, rgba(40,40,50,0.9) 50%, rgba(30,30,40,0.95) 100%)`
+                      : `linear-gradient(135deg, rgba(20,20,30,0.9) 0%, rgba(30,30,40,0.85) 50%, rgba(20,20,30,0.9) 100%)`,
                     backdropFilter: "blur(20px) saturate(180%)",
                     WebkitBackdropFilter: "blur(20px) saturate(180%)",
-                    border: `1px solid rgba(255,255,255,${isEnterHovered ? 0.35 : 0.2})`,
+                    border: `1px solid ${isEnterHovered ? option.accentColor + '60' : 'rgba(255,255,255,0.25)'}`,
                     boxShadow: isEnterPressed
-                      ? `inset 0 2px 15px rgba(255,255,255,0.1), 0 0 40px ${option.accentColor}30`
+                      ? `inset 0 2px 15px rgba(0,0,0,0.3), 0 0 40px ${option.accentColor}30`
                       : isEnterHovered
-                        ? `0 8px 32px rgba(0,0,0,0.3), 0 0 60px ${option.accentColor}25, inset 0 1px 1px rgba(255,255,255,0.3)`
-                        : `0 4px 24px rgba(0,0,0,0.2), inset 0 1px 1px rgba(255,255,255,0.25)`,
+                        ? `0 8px 32px rgba(0,0,0,0.5), 0 0 60px ${option.accentColor}35, inset 0 1px 1px rgba(255,255,255,0.1)`
+                        : `0 4px 24px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.1)`,
                     transform: isEnterPressed
                       ? "scale(0.96)"
                       : isEnterHovered
@@ -243,50 +243,70 @@ export function InferenceCard({
                     }}
                   />
 
-                  {/* ENTER text */}
-                  <span
-                    className="text-sm font-semibold uppercase tracking-[0.2em]"
-                    style={{
-                      fontFamily:
-                        "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
-                      color: isEnterHovered
-                        ? "rgba(255,255,255,0.95)"
-                        : "rgba(255,255,255,0.85)",
-                      textShadow: isEnterHovered
-                        ? `0 0 20px ${option.accentColor}80, 0 1px 2px rgba(0,0,0,0.3)`
-                        : "0 1px 2px rgba(0,0,0,0.2)",
-                    }}
-                  >
-                    ENTER
-                  </span>
-
-                  {/* Arrow icon */}
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    className="ml-1"
-                    style={{
-                      transform: isEnterHovered
-                        ? "translateX(3px)"
-                        : "translateX(0)",
-                      opacity: isEnterHovered ? 1 : 0.7,
-                      transition: "all 0.2s ease",
-                    }}
-                  >
-                    <path
-                      d="M3 8H13M13 8L9 4M13 8L9 12"
-                      stroke={
-                        isEnterHovered
+                  {/* ENTER text or Coming Soon */}
+                  {option.comingSoon ? (
+                    <span
+                      className="text-sm font-semibold uppercase tracking-[0.2em]"
+                      style={{
+                        fontFamily:
+                          "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
+                        color: isEnterHovered
                           ? "rgba(255,255,255,0.95)"
-                          : "rgba(255,255,255,0.7)"
-                      }
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                          : "rgba(255,255,255,0.85)",
+                        textShadow: isEnterHovered
+                          ? `0 0 20px ${option.accentColor}80, 0 1px 2px rgba(0,0,0,0.3)`
+                          : "0 1px 2px rgba(0,0,0,0.2)",
+                      }}
+                    >
+                      Coming Soon
+                    </span>
+                  ) : (
+                    <>
+                      <span
+                        className="text-sm font-semibold uppercase tracking-[0.2em]"
+                        style={{
+                          fontFamily:
+                            "'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif",
+                          color: isEnterHovered
+                            ? "rgba(255,255,255,0.95)"
+                            : "rgba(255,255,255,0.85)",
+                          textShadow: isEnterHovered
+                            ? `0 0 20px ${option.accentColor}80, 0 1px 2px rgba(0,0,0,0.3)`
+                            : "0 1px 2px rgba(0,0,0,0.2)",
+                        }}
+                      >
+                        ENTER
+                      </span>
+
+                      {/* Arrow icon */}
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        className="ml-1"
+                        style={{
+                          transform: isEnterHovered
+                            ? "translateX(3px)"
+                            : "translateX(0)",
+                          opacity: isEnterHovered ? 1 : 0.7,
+                          transition: "all 0.2s ease",
+                        }}
+                      >
+                        <path
+                          d="M3 8H13M13 8L9 4M13 8L9 12"
+                          stroke={
+                            isEnterHovered
+                              ? "rgba(255,255,255,0.95)"
+                              : "rgba(255,255,255,0.7)"
+                          }
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </>
+                  )}
                 </a>
               </motion.div>
             )}

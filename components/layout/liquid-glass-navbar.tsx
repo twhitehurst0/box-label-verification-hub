@@ -542,15 +542,28 @@ export function LiquidGlassNavbar({
 
                               {/* Text */}
                               <div className="flex flex-col">
-                                <span
-                                  className="text-sm font-medium"
-                                  style={{
-                                    color: hoveredDropdownItem === "reporting" ? "#fff" : "rgba(255,255,255,0.9)",
-                                    textShadow: hoveredDropdownItem === "reporting" ? `0 0 10px ${INFERENCE_ACCENT}` : "none",
-                                  }}
-                                >
-                                  Reporting
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className="text-sm font-medium"
+                                    style={{
+                                      color: hoveredDropdownItem === "reporting" ? "#fff" : "rgba(255,255,255,0.9)",
+                                      textShadow: hoveredDropdownItem === "reporting" ? `0 0 10px ${INFERENCE_ACCENT}` : "none",
+                                    }}
+                                  >
+                                    Reporting
+                                  </span>
+                                  {/* Coming Soon Badge */}
+                                  <span
+                                    className="px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider rounded"
+                                    style={{
+                                      background: `linear-gradient(135deg, ${INFERENCE_ACCENT}30 0%, ${INFERENCE_ACCENT}15 100%)`,
+                                      border: `1px solid ${INFERENCE_ACCENT}40`,
+                                      color: INFERENCE_ACCENT,
+                                    }}
+                                  >
+                                    Soon
+                                  </span>
+                                </div>
                                 <span className="text-xs text-white/40">
                                   View test results
                                 </span>

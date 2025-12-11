@@ -20,5 +20,6 @@ export const inferenceOptions: InferenceOption[] = [
     accentColor: "#a855f7",
     imagePosition: "center center",
     imageScale: 0.85, // Scale down to fit better
+    comingSoon: true,
   },
 ]
