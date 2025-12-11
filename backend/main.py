@@ -36,7 +36,25 @@ class StartInferenceRequest(BaseModel):
     engine: str = Field(..., description="OCR engine: 'easyocr' or 'paddleocr'")
     dataset_version: str = Field(..., description="Dataset version (e.g., 'version-1')")
     dataset_name: str = Field(default="default", description="Dataset name")
+    preprocessing: str = Field(default="none", description="Preprocessing type to apply")
     use_gpu: bool = Field(default=True, description="Whether to use GPU acceleration")
+
+
+class StartBatchInferenceRequest(BaseModel):
+    """Request body for starting batch inference with multiple preprocessing options."""
+    engine: str = Field(..., description="OCR engine: 'easyocr' or 'paddleocr'")
+    dataset_version: str = Field(..., description="Dataset version (e.g., 'version-1')")
+    dataset_name: str = Field(default="default", description="Dataset name")
+    preprocessing_options: List[str] = Field(default=["none"], description="List of preprocessing types to run")
+    use_gpu: bool = Field(default=True, description="Whether to use GPU acceleration")
+
+
+class StartBatchInferenceResponse(BaseModel):
+    """Response from starting batch inference jobs."""
+    success: bool
+    job_ids: List[str]
+    message: str
+    total_jobs: int
 
 
 class StartInferenceResponse(BaseModel):
@@ -51,6 +69,7 @@ class JobStatusResponse(BaseModel):
     """Response with job status information."""
     job_id: str
     engine: str
+    preprocessing: str = "none"
     dataset_version: str
     dataset_name: str
     status: str
@@ -177,13 +196,23 @@ def run_inference_process(
     images_dir_str: str,
     ground_truth_csv_str: Optional[str],
     dataset_version: str,
-    total_images: int
+    total_images: int,
+    preprocessing: str = "none"
 ):
     """
     Run inference in a separate process.
 
     This function runs in its own process with fresh Pixeltable connections,
     avoiding SQLAlchemy thread-local connection issues.
+
+    Args:
+        job_id: Unique job identifier
+        engine: OCR engine to use
+        images_dir_str: Path to images directory
+        ground_truth_csv_str: Path to ground truth CSV (optional)
+        dataset_version: Version of the dataset
+        total_images: Total number of images
+        preprocessing: Preprocessing type to apply before OCR
     """
     # Import everything fresh in this process
     import sys
@@ -243,6 +272,7 @@ def run_inference_process(
             engine=engine,
             images_dir=images_dir,
             ground_truth_csv=ground_truth_csv,
+            preprocessing=preprocessing,
         )
 
         print(f"Inference job {job_id} completed successfully")
@@ -324,6 +354,7 @@ async def start_inference(request: StartInferenceRequest):
         dataset_version=request.dataset_version,
         dataset_name=request.dataset_name,
         total_images=dataset.image_count,
+        preprocessing=request.preprocessing,
     )
 
     # Start inference in a separate PROCESS (not thread)
@@ -337,18 +368,170 @@ async def start_inference(request: StartInferenceRequest):
             ground_truth_csv_str,
             request.dataset_version,
             dataset.image_count,
+            request.preprocessing,
         ),
         daemon=True,  # Process will terminate when main process exits
     )
     process.start()
 
-    print(f"Started inference process (PID: {process.pid}) for job {job_id}")
+    print(f"Started inference process (PID: {process.pid}) for job {job_id} with preprocessing: {request.preprocessing}")
 
     return StartInferenceResponse(
         success=True,
         job_id=job_id,
         message=f"Inference job started with {request.engine}",
         total_images=dataset.image_count,
+    )
+
+
+@app.get("/preprocessing-options")
+async def get_preprocessing_options():
+    """Get list of available preprocessing options."""
+    from preprocessing import get_available_preprocessing_options
+    return get_available_preprocessing_options()
+
+
+def run_sequential_batch_inference(
+    job_configs: List[dict],
+):
+    """
+    Run multiple inference jobs sequentially in a single process.
+
+    This avoids Pixeltable concurrency conflicts by running one job at a time.
+    Each job_config contains: job_id, engine, images_dir, ground_truth_csv,
+    dataset_version, total_images, preprocessing
+    """
+    import sys
+    import os
+    from pathlib import Path
+
+    # Add paths for imports
+    backend_dir = Path(__file__).parent
+    project_root = backend_dir.parent
+    sys.path.insert(0, str(project_root))
+    sys.path.insert(0, str(backend_dir))
+
+    # Load environment variables
+    from dotenv import load_dotenv
+    env_file = project_root / ".env.local"
+    if env_file.exists():
+        load_dotenv(env_file, override=True)
+    ocr_env = project_root / "OCR_scripts" / ".env"
+    if ocr_env.exists():
+        load_dotenv(ocr_env, override=True)
+
+    # Import inference service
+    from inference_service import InferenceService
+
+    for config in job_configs:
+        job_id = config["job_id"]
+        engine = config["engine"]
+        images_dir = Path(config["images_dir"])
+        ground_truth_csv = Path(config["ground_truth_csv"]) if config["ground_truth_csv"] else None
+        preprocessing = config["preprocessing"]
+
+        try:
+            # Create fresh service instance
+            service = InferenceService()
+
+            # Update job to running
+            service.update_job_status(job_id, "running")
+            print(f"Starting sequential job {job_id} with preprocessing: {preprocessing}")
+
+            # Run the actual inference
+            service.run_inference(
+                job_id=job_id,
+                engine=engine,
+                images_dir=images_dir,
+                ground_truth_csv=ground_truth_csv,
+                preprocessing=preprocessing,
+            )
+
+            print(f"Completed job {job_id} with preprocessing: {preprocessing}")
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"Job {job_id} failed: {e}")
+
+            try:
+                service = InferenceService()
+                service.update_job_status(job_id, "failed", error_message=str(e))
+            except Exception as update_err:
+                print(f"Failed to update job status: {update_err}")
+
+
+@app.post("/inference/start-batch", response_model=StartBatchInferenceResponse)
+async def start_batch_inference(request: StartBatchInferenceRequest):
+    """Start multiple inference jobs with different preprocessing options.
+
+    This endpoint creates one job per preprocessing option and runs them SEQUENTIALLY
+    to avoid Pixeltable concurrency conflicts.
+    """
+    # Validate engine
+    if request.engine not in ("easyocr", "paddleocr"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid engine: {request.engine}. Must be 'easyocr' or 'paddleocr'"
+        )
+
+    # Find dataset
+    datasets = list_available_datasets()
+    dataset = next(
+        (d for d in datasets if d.version == request.dataset_version),
+        None
+    )
+
+    if not dataset:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Dataset not found: {request.dataset_version}"
+        )
+
+    images_dir = Path(dataset.images_dir)
+    ground_truth_csv = images_dir.parent / "ground_truth.csv"
+    ground_truth_csv_str = str(ground_truth_csv) if ground_truth_csv.exists() else None
+
+    # Get service
+    service = get_inference_service()
+    job_ids = []
+    job_configs = []
+
+    # Create all jobs first (in pending state)
+    for preprocessing in request.preprocessing_options:
+        job_id = service.create_job(
+            engine=request.engine,
+            dataset_version=request.dataset_version,
+            dataset_name=request.dataset_name,
+            total_images=dataset.image_count,
+            preprocessing=preprocessing,
+        )
+        job_ids.append(job_id)
+        job_configs.append({
+            "job_id": job_id,
+            "engine": request.engine,
+            "images_dir": str(images_dir),
+            "ground_truth_csv": ground_truth_csv_str,
+            "dataset_version": request.dataset_version,
+            "total_images": dataset.image_count,
+            "preprocessing": preprocessing,
+        })
+        print(f"Created batch job {job_id} with preprocessing: {preprocessing}")
+
+    # Start a single process that runs all jobs sequentially
+    process = multiprocessing.Process(
+        target=run_sequential_batch_inference,
+        args=(job_configs,),
+        daemon=True,
+    )
+    process.start()
+    print(f"Started sequential batch inference process (PID: {process.pid}) for {len(job_ids)} jobs")
+
+    return StartBatchInferenceResponse(
+        success=True,
+        job_ids=job_ids,
+        message=f"Started {len(job_ids)} inference jobs (running sequentially to avoid conflicts)",
+        total_jobs=len(job_ids),
     )
 
 
@@ -403,6 +586,64 @@ async def delete_job(job_id: str):
         return {"success": True, "message": "Job deleted from Pixeltable"}
     else:
         raise HTTPException(status_code=500, detail="Failed to delete job from database")
+
+
+class BatchDeleteRequest(BaseModel):
+    """Request body for batch deletion of jobs."""
+    job_ids: List[str] = Field(..., description="List of job IDs to delete")
+
+
+class BatchDeleteResponse(BaseModel):
+    """Response from batch deletion."""
+    success: bool
+    deleted_count: int
+    failed_count: int
+    failed_jobs: List[str] = []
+    message: str
+
+
+@app.post("/inference/jobs/batch-delete", response_model=BatchDeleteResponse)
+async def batch_delete_jobs(request: BatchDeleteRequest):
+    """Delete multiple jobs and all their related data from Pixeltable."""
+    service = get_inference_service()
+
+    deleted_count = 0
+    failed_count = 0
+    failed_jobs = []
+
+    for job_id in request.job_ids:
+        try:
+            status = service.get_job_status(job_id)
+
+            if not status:
+                failed_count += 1
+                failed_jobs.append(job_id)
+                continue
+
+            # If running, mark as cancelled first
+            if status["status"] == "running":
+                service.update_job_status(job_id, "cancelled")
+
+            # Delete all related data from Pixeltable
+            success = service.delete_job(job_id)
+
+            if success:
+                deleted_count += 1
+            else:
+                failed_count += 1
+                failed_jobs.append(job_id)
+        except Exception as e:
+            print(f"Failed to delete job {job_id}: {e}")
+            failed_count += 1
+            failed_jobs.append(job_id)
+
+    return BatchDeleteResponse(
+        success=failed_count == 0,
+        deleted_count=deleted_count,
+        failed_count=failed_count,
+        failed_jobs=failed_jobs,
+        message=f"Deleted {deleted_count} jobs" + (f", {failed_count} failed" if failed_count > 0 else ""),
+    )
 
 
 @app.get("/ocr-engines")

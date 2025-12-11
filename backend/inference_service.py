@@ -47,6 +47,8 @@ from pixeltable_schema import (
     setup_all_tables,
 )
 
+from preprocessing import preprocess_image
+
 
 class InferenceService:
     """Service for running OCR inference and storing results in Pixeltable."""
@@ -85,15 +87,27 @@ class InferenceService:
             self.paddleocr_engine = PaddleOCR(lang=lang)
         return self.paddleocr_engine
 
-    def _run_ocr_on_crop(self, crop: np.ndarray, engine: str) -> str:
-        """Run OCR on a cropped image region."""
+    def _run_ocr_on_crop(self, crop: np.ndarray, engine: str, preprocessing: str = "none") -> str:
+        """Run OCR on a cropped image region with optional preprocessing.
+
+        Args:
+            crop: Input image crop as numpy array (BGR format)
+            engine: OCR engine to use ('easyocr' or 'paddleocr')
+            preprocessing: Preprocessing type to apply before OCR
+
+        Returns:
+            Extracted text from the image crop
+        """
+        # Apply preprocessing before OCR
+        processed_crop = preprocess_image(crop, preprocessing)
+
         if engine == "easyocr":
             reader = self._init_easyocr()
             # EasyOCR expects RGB
-            if len(crop.shape) == 3 and crop.shape[2] == 3:
-                crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            if len(processed_crop.shape) == 3 and processed_crop.shape[2] == 3:
+                crop_rgb = cv2.cvtColor(processed_crop, cv2.COLOR_BGR2RGB)
             else:
-                crop_rgb = crop
+                crop_rgb = processed_crop
 
             results = reader.readtext(crop_rgb)
             texts = [text for bbox, text, conf in results if conf >= OCR_CONFIDENCE_THRESHOLD]
@@ -102,7 +116,7 @@ class InferenceService:
         elif engine == "paddleocr":
             ocr = self._init_paddleocr()
             # PaddleOCR 3.x uses predict() instead of ocr()
-            results = ocr.predict(crop)
+            results = ocr.predict(processed_crop)
 
             if not results:
                 return ""
@@ -126,15 +140,28 @@ class InferenceService:
         engine: str,
         dataset_version: str,
         dataset_name: str,
-        total_images: int
+        total_images: int,
+        preprocessing: str = "none"
     ) -> str:
-        """Create a new inference job record."""
+        """Create a new inference job record.
+
+        Args:
+            engine: OCR engine to use
+            dataset_version: Version of the dataset
+            dataset_name: Name of the dataset
+            total_images: Total number of images to process
+            preprocessing: Preprocessing type to apply
+
+        Returns:
+            job_id: Unique identifier for the job
+        """
         job_id = str(uuid.uuid4())
 
         jobs_table = get_inference_jobs_table()
         jobs_table.insert([{
             "job_id": job_id,
             "engine": engine,
+            "preprocessing": preprocessing,
             "dataset_version": dataset_version,
             "dataset_name": dataset_name,
             "status": "pending",
@@ -302,7 +329,8 @@ class InferenceService:
         images_dir: Path,
         ground_truth_csv: Optional[Path] = None,
         progress_callback=None,
-        job_id: Optional[str] = None
+        job_id: Optional[str] = None,
+        preprocessing: str = "none"
     ) -> str:
         """
         Run full inference pipeline on a dataset.
@@ -313,6 +341,7 @@ class InferenceService:
             ground_truth_csv: Optional path to ground truth CSV
             progress_callback: Optional callback(job_id, processed, total, current_file)
             job_id: Optional existing job ID (if not provided, creates new job)
+            preprocessing: Preprocessing type to apply to images before OCR
 
         Returns:
             job_id: The ID of the created/used job
@@ -338,7 +367,8 @@ class InferenceService:
                 engine=engine,
                 dataset_version=dataset_version,
                 dataset_name=dataset_name,
-                total_images=len(image_files)
+                total_images=len(image_files),
+                preprocessing=preprocessing
             )
             # Update status to running (only for newly created jobs)
             self.update_job_status(job_id, "running")
@@ -363,10 +393,10 @@ class InferenceService:
                     confidence_threshold=DETECTION_CONFIDENCE_THRESHOLD
                 )
 
-                # Run OCR on each crop
+                # Run OCR on each crop with preprocessing
                 ocr_results = {}
                 for class_name, crop_image in crops.items():
-                    text = self._run_ocr_on_crop(crop_image, engine)
+                    text = self._run_ocr_on_crop(crop_image, engine, preprocessing)
                     ocr_results[class_name] = text
 
                 processing_time = (time.time() - start_time) * 1000
@@ -428,6 +458,7 @@ class InferenceService:
         return {
             "job_id": row["job_id"],
             "engine": row["engine"],
+            "preprocessing": row.get("preprocessing", "none"),
             "dataset_version": row["dataset_version"],
             "dataset_name": row["dataset_name"],
             "status": row["status"],
@@ -508,6 +539,7 @@ class InferenceService:
                 jobs.append({
                     "job_id": row.job_id,
                     "engine": row.engine,
+                    "preprocessing": getattr(row, "preprocessing", "none"),
                     "dataset_version": row.dataset_version,
                     "dataset_name": row.dataset_name,
                     "status": row.status,

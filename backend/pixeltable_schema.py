@@ -50,6 +50,7 @@ def create_inference_jobs_table() -> Table:
     Columns:
     - job_id: Unique identifier for the job
     - engine: OCR engine used (easyocr, paddleocr)
+    - preprocessing: Preprocessing type applied (none, rescale, binarize_otsu, etc.)
     - dataset_version: S3 dataset version
     - dataset_name: S3 dataset name
     - status: pending, running, completed, failed
@@ -73,6 +74,7 @@ def create_inference_jobs_table() -> Table:
         {
             "job_id": pxt.String,
             "engine": pxt.String,
+            "preprocessing": pxt.String,
             "dataset_version": pxt.String,
             "dataset_name": pxt.String,
             "status": pxt.String,

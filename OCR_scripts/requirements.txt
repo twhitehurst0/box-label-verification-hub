@@ -1,0 +1,12 @@
+roboflow>=1.1.0
+easyocr>=1.7.0
+paddleocr>=2.7.0
+paddlepaddle>=2.5.0
+opencv-python>=4.8.0
+pillow>=10.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+tqdm>=4.65.0
+inference-sdk>=0.20.0
+supervision>=0.22.0

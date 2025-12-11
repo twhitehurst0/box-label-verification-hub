@@ -4,15 +4,22 @@ import { useState, useEffect, useCallback } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import { EngineSelector } from "./engine-selector"
 import { DatasetSelector } from "./dataset-selector"
+import { PreprocessingSelector } from "./preprocessing-selector"
 import { InferenceButton } from "./inference-button"
+import { RunAllButton } from "./run-all-button"
 import { JobsTable } from "./jobs-table"
 import { ResultsViewer } from "./results-viewer"
+import { ComparisonViewer } from "./comparison-viewer"
 import type {
   OCREngine,
   TestDataset,
   InferenceJob,
   JobResults,
   StartInferenceResponse,
+  PreprocessingType,
+  PreprocessingComparison,
+  StartBatchInferenceResponse,
+  JobSummary,
 } from "@/types/model-testing"
 import { OCR_ENGINES } from "@/types/model-testing"
 
@@ -25,6 +32,7 @@ export function ModelTestingConsole() {
   // Selection state
   const [selectedEngine, setSelectedEngine] = useState<OCREngine | null>(null)
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null)
+  const [selectedPreprocessing, setSelectedPreprocessing] = useState<PreprocessingType[]>(["none"])
 
   // Data state
   const [datasets, setDatasets] = useState<TestDataset[]>([])
@@ -48,6 +56,12 @@ export function ModelTestingConsole() {
 
   // Delete state
   const [deletingJobId, setDeletingJobId] = useState<string | null>(null)
+  const [deletingBatch, setDeletingBatch] = useState(false)
+
+  // Batch comparison state
+  const [runningBatch, setRunningBatch] = useState(false)
+  const [showComparison, setShowComparison] = useState(false)
+  const [comparisons, setComparisons] = useState<PreprocessingComparison[]>([])
 
   useEffect(() => {
     setMounted(true)
@@ -145,9 +159,10 @@ export function ModelTestingConsole() {
     return () => clearInterval(interval)
   }, [currentJobId, runningInference, fetchJobs, jobs, apiStatus])
 
-  // Start inference
+  // Start inference (single preprocessing option)
   const handleStartInference = async () => {
     if (!selectedEngine || !selectedDataset) return
+    const preprocessing = selectedPreprocessing.length > 0 ? selectedPreprocessing[0] : "none"
 
     try {
       setRunningInference(true)
@@ -161,6 +176,7 @@ export function ModelTestingConsole() {
           engine: selectedEngine,
           dataset_version: selectedDataset,
           dataset_name: "default",
+          preprocessing,
         }),
       })
 
@@ -177,6 +193,130 @@ export function ModelTestingConsole() {
       setError("Failed to start inference. Check if backend is running.")
       setRunningInference(false)
     }
+  }
+
+  // Start batch inference (multiple preprocessing options)
+  const handleStartBatchInference = async () => {
+    if (!selectedEngine || !selectedDataset || selectedPreprocessing.length < 2) return
+
+    try {
+      setRunningBatch(true)
+      setError(null)
+
+      // Initialize comparisons with pending status
+      const initialComparisons: PreprocessingComparison[] = selectedPreprocessing.map((p) => ({
+        preprocessing: p,
+        job_id: "",
+        summary: null,
+        status: "pending" as const,
+      }))
+      setComparisons(initialComparisons)
+      setShowComparison(true)
+
+      const res = await fetch(`${API_BASE}/inference/start-batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          engine: selectedEngine,
+          dataset_version: selectedDataset,
+          dataset_name: "default",
+          preprocessing_options: selectedPreprocessing,
+        }),
+      })
+
+      const data: StartBatchInferenceResponse = await res.json()
+
+      if (data.success && data.job_ids) {
+        // Update comparisons with job IDs
+        const updatedComparisons = selectedPreprocessing.map((p, i) => ({
+          preprocessing: p,
+          job_id: data.job_ids[i],
+          summary: null,
+          status: "running" as const,
+        }))
+        setComparisons(updatedComparisons)
+        fetchJobs()
+
+        // Start polling for batch results
+        pollBatchResults(data.job_ids, updatedComparisons)
+      } else {
+        setError(data.message || "Failed to start batch inference")
+        setRunningBatch(false)
+        setShowComparison(false)
+      }
+    } catch (err) {
+      setError("Failed to start batch inference. Check if backend is running.")
+      setRunningBatch(false)
+      setShowComparison(false)
+    }
+  }
+
+  // Poll for batch results - fetch jobs list instead of individual status to reduce DB load
+  const pollBatchResults = async (jobIds: string[], initialComparisons: PreprocessingComparison[]) => {
+    // Small delay to ensure jobs are created in the backend
+    await new Promise(resolve => setTimeout(resolve, 2000))
+
+    const pollInterval = setInterval(async () => {
+      try {
+        // Fetch the jobs list once instead of individual status calls
+        // This reduces Pixeltable database load significantly
+        const jobsRes = await fetch(`${API_BASE}/inference/jobs`)
+        if (!jobsRes.ok) {
+          console.warn("Failed to fetch jobs list")
+          return
+        }
+        const allJobs = await jobsRes.json()
+
+        // Map jobs to comparisons
+        const updatedComparisons: PreprocessingComparison[] = await Promise.all(
+          initialComparisons.map(async (comp, i) => {
+            const jobId = jobIds[i]
+            const job = allJobs.find((j: { job_id: string }) => j.job_id === jobId)
+
+            if (!job) {
+              return { ...comp, job_id: jobId }
+            }
+
+            let summary: JobSummary | null = null
+            if (job.status === "completed") {
+              // Add small delay between result fetches to avoid DB contention
+              await new Promise(resolve => setTimeout(resolve, i * 200))
+              try {
+                const resultsRes = await fetch(`${API_BASE}/inference/jobs/${jobId}/results`)
+                if (resultsRes.ok) {
+                  const results = await resultsRes.json()
+                  summary = results.summary
+                }
+              } catch {
+                // Results not available yet, continue without summary
+              }
+            }
+
+            return {
+              ...comp,
+              job_id: jobId,
+              status: job.status,
+              summary,
+            }
+          })
+        )
+
+        setComparisons(updatedComparisons)
+
+        // Check if all jobs are complete
+        const allComplete = updatedComparisons.every(
+          (c) => c.status === "completed" || c.status === "failed"
+        )
+        if (allComplete) {
+          clearInterval(pollInterval)
+          setRunningBatch(false)
+          // Final refresh
+          fetchJobs()
+        }
+      } catch (err) {
+        console.error("Failed to poll batch results:", err)
+      }
+    }, 5000) // Poll every 5 seconds instead of 2.5 to reduce load
   }
 
   // View results
@@ -223,7 +363,42 @@ export function ModelTestingConsole() {
     }
   }
 
-  const canRunInference = selectedEngine && selectedDataset && !runningInference && apiStatus === "online"
+  // Delete multiple jobs
+  const handleDeleteSelected = async (jobIds: string[]) => {
+    if (jobIds.length === 0) return
+
+    setDeletingBatch(true)
+
+    try {
+      const res = await fetch(`${API_BASE}/inference/jobs/batch-delete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_ids: jobIds }),
+      })
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+      }
+
+      const data = await res.json()
+
+      if (data.failed_count > 0) {
+        setError(`Deleted ${data.deleted_count} jobs, but ${data.failed_count} failed`)
+      }
+
+      // Refresh jobs list
+      await fetchJobs()
+    } catch (err) {
+      console.error("Failed to delete jobs:", err)
+      setError(`Failed to delete jobs: ${err instanceof Error ? err.message : "Unknown error"}`)
+    } finally {
+      setDeletingBatch(false)
+    }
+  }
+
+  const canRunInference = selectedEngine && selectedDataset && !runningInference && !runningBatch && apiStatus === "online"
+  const canRunBatch = canRunInference && selectedPreprocessing.length >= 2
+  const showBatchButton = selectedPreprocessing.length >= 2
 
   if (!mounted) {
     return <div className="h-full w-full bg-black" />
@@ -405,7 +580,7 @@ export function ModelTestingConsole() {
           >
             {/* Panel wrapper */}
             <div
-              className="relative rounded-2xl overflow-hidden"
+              className="relative rounded-2xl"
               style={{
                 background: "linear-gradient(135deg, rgba(30,30,40,0.95) 0%, rgba(20,20,30,0.95) 100%)",
                 border: `1px solid ${ACCENT_COLOR}30`,
@@ -415,13 +590,13 @@ export function ModelTestingConsole() {
             >
               {/* Top highlight */}
               <div
-                className="absolute inset-x-0 top-0 h-[1px]"
+                className="absolute inset-x-0 top-0 h-[1px] rounded-t-2xl overflow-hidden"
                 style={{
                   background: `linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.2) 50%, transparent 100%)`,
                 }}
               />
 
-              <div className="p-6 space-y-8">
+              <div className="p-6 space-y-8 rounded-2xl overflow-visible">
                 {/* Section header */}
                 <div className="flex items-center gap-3">
                   <div
@@ -463,18 +638,36 @@ export function ModelTestingConsole() {
                   selectedDataset={selectedDataset}
                   onSelect={setSelectedDataset}
                   loading={loadingDatasets}
-                  disabled={runningInference || apiStatus !== "online"}
+                  disabled={runningInference || runningBatch || apiStatus !== "online"}
                   accentColor={ACCENT_COLOR}
                 />
 
-                {/* Run button */}
-                <InferenceButton
-                  onClick={handleStartInference}
-                  disabled={!canRunInference}
-                  loading={runningInference}
-                  progress={progress}
+                {/* Preprocessing selector */}
+                <PreprocessingSelector
+                  selectedOptions={selectedPreprocessing}
+                  onSelect={setSelectedPreprocessing}
+                  disabled={runningInference || runningBatch || apiStatus !== "online"}
                   accentColor={ACCENT_COLOR}
                 />
+
+                {/* Run button - show single or batch based on selection */}
+                {showBatchButton ? (
+                  <RunAllButton
+                    onClick={handleStartBatchInference}
+                    disabled={!canRunBatch}
+                    loading={runningBatch}
+                    selectedCount={selectedPreprocessing.length}
+                    accentColor={ACCENT_COLOR}
+                  />
+                ) : (
+                  <InferenceButton
+                    onClick={handleStartInference}
+                    disabled={!canRunInference}
+                    loading={runningInference}
+                    progress={progress}
+                    accentColor={ACCENT_COLOR}
+                  />
+                )}
               </div>
             </div>
           </motion.div>
@@ -509,9 +702,11 @@ export function ModelTestingConsole() {
                   loading={loadingJobs}
                   onViewResults={handleViewResults}
                   onDeleteJob={handleDeleteJob}
+                  onDeleteSelected={handleDeleteSelected}
                   onRefresh={fetchJobs}
                   accentColor={ACCENT_COLOR}
                   deletingJobId={deletingJobId}
+                  deletingBatch={deletingBatch}
                 />
               </div>
             </div>
@@ -527,6 +722,21 @@ export function ModelTestingConsole() {
           onClose={() => {
             setViewingResults(null)
             setResultsData(null)
+          }}
+          accentColor={ACCENT_COLOR}
+        />
+      )}
+
+      {/* Comparison viewer modal */}
+      {showComparison && (
+        <ComparisonViewer
+          comparisons={comparisons}
+          loading={runningBatch}
+          onClose={() => {
+            setShowComparison(false)
+            if (!runningBatch) {
+              setComparisons([])
+            }
           }}
           accentColor={ACCENT_COLOR}
         />
