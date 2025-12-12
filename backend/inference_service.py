@@ -830,6 +830,9 @@ class InferenceService:
                     "processed_images": row.processed_images,
                     "progress": (row.processed_images / row.total_images * 100) if row.total_images > 0 else 0,
                     "created_at": str(row.created_at) if row.created_at else None,
+                    "started_at": str(getattr(row, "started_at", None)) if getattr(row, "started_at", None) else None,
+                    "completed_at": str(getattr(row, "completed_at", None)) if getattr(row, "completed_at", None) else None,
+                    "error_message": getattr(row, "error_message", None),
                 })
 
         return jobs
