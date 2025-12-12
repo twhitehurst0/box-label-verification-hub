@@ -2,11 +2,84 @@ import {
   S3Client,
   ListObjectsV2Command,
   GetObjectCommand,
+  HeadObjectCommand,
 } from "@aws-sdk/client-s3"
 import type { S3Version, S3Dataset, COCOAnnotations, DatasetStats } from "@/types/ocr"
 
 const S3_BUCKET = process.env.S3_BUCKET || "box-label-processing-central"
 const S3_BASE_PREFIX = "processed/ocr/"
+
+async function headLastModified(client: S3Client, key: string): Promise<Date | null> {
+  try {
+    const res = await client.send(
+      new HeadObjectCommand({
+        Bucket: S3_BUCKET,
+        Key: key,
+      })
+    )
+    return res.LastModified ?? null
+  } catch (err: any) {
+    const status = err?.$metadata?.httpStatusCode
+    const name = err?.name
+    // Missing objects should not break listing
+    if (status === 404 || name === "NotFound" || name === "NoSuchKey") {
+      return null
+    }
+    throw err
+  }
+}
+
+async function getVersionUploadedAt(client: S3Client, version: string): Promise<string | undefined> {
+  // Prefer a canonical manifest file if present (cheap + deterministic)
+  const directAnnotationsKey = `${S3_BASE_PREFIX}${version}/final/annotations.json`
+  const direct = await headLastModified(client, directAnnotationsKey)
+  if (direct) return direct.toISOString()
+
+  const finalPrefix = `${S3_BASE_PREFIX}${version}/final/`
+
+  // If annotations.json is nested under dataset folders, use the newest annotations.json
+  const list = await client.send(
+    new ListObjectsV2Command({
+      Bucket: S3_BUCKET,
+      Prefix: finalPrefix,
+      Delimiter: "/",
+    })
+  )
+
+  const datasetPrefixes = (list.CommonPrefixes || [])
+    .map((p) => p.Prefix || "")
+    .filter(Boolean)
+    .slice(0, 25) // safety cap
+
+  if (datasetPrefixes.length > 0) {
+    const heads = await Promise.allSettled(
+      datasetPrefixes.map((p) => headLastModified(client, `${p}annotations.json`))
+    )
+    const times = heads
+      .flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value.getTime()] : []))
+    if (times.length > 0) {
+      return new Date(Math.max(...times)).toISOString()
+    }
+  }
+
+  // Fallback: best-effort max LastModified from the first page under final/
+  const listObjects = await client.send(
+    new ListObjectsV2Command({
+      Bucket: S3_BUCKET,
+      Prefix: finalPrefix,
+      MaxKeys: 1000,
+    })
+  )
+
+  const max = (listObjects.Contents || []).reduce<Date | null>((acc, obj) => {
+    const lm = obj.LastModified ?? null
+    if (!lm) return acc
+    if (!acc) return lm
+    return lm > acc ? lm : acc
+  }, null)
+
+  return max ? max.toISOString() : undefined
+}
 
 // Create S3 client (credentials from environment)
 export function getS3Client(): S3Client {
@@ -31,7 +104,7 @@ export async function listVersions(): Promise<S3Version[]> {
 
   const response = await client.send(command)
 
-  const versions: S3Version[] = (response.CommonPrefixes || [])
+  const baseVersions: S3Version[] = (response.CommonPrefixes || [])
     .map((prefix) => {
       const fullPath = prefix.Prefix || ""
       // Extract version name from path like "processed/ocr/version-1/"
@@ -48,6 +121,13 @@ export async function listVersions(): Promise<S3Version[]> {
       const numB = parseInt(b.name.replace("version-", "")) || 0
       return numA - numB
     })
+
+  const versions = await Promise.all(
+    baseVersions.map(async (v) => ({
+      ...v,
+      uploadedAt: await getVersionUploadedAt(client, v.name),
+    }))
+  )
 
   return versions
 }

@@ -37,6 +37,49 @@ export function VersionSelector({
 
   const selectedVersionData = versions.find((v) => v.name === selectedVersion)
 
+  const formatCentralTime = (iso?: string) => {
+    if (!iso) return null
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return null
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Chicago",
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }).format(d)
+  }
+
+  const CentralTimeBadge = () => (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono"
+      style={{
+        background: `${accentColor}15`,
+        color: accentColor,
+        border: `1px solid ${accentColor}30`,
+      }}
+      title="Central Time (America/Chicago)"
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10Z"
+          stroke="currentColor"
+          strokeWidth="1.8"
+        />
+        <path
+          d="M12 6v6l4 2"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      CT
+    </span>
+  )
+
   return (
     <div ref={dropdownRef} className="relative">
       <label className="block text-white/40 text-xs font-medium mb-2 uppercase tracking-wider text-center">
@@ -74,29 +117,40 @@ export function VersionSelector({
                 <span className="text-white/40 text-sm">Loading...</span>
               </div>
             ) : (
-              <div className="flex items-center gap-2">
-                <span
-                  className={`text-sm ${selectedVersion ? "text-white" : "text-white/40"}`}
-                  style={selectedVersion ? { textShadow: `0 0 20px ${accentColor}40` } : {}}
-                >
-                  {selectedVersionData?.name || "Select dataset version"}
-                </span>
-                <motion.svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  animate={{ rotate: isOpen ? 180 : 0 }}
-                  transition={{ duration: 0.2 }}
-                >
-                  <path
-                    d="M4 6L8 10L12 6"
-                    stroke="rgba(255,255,255,0.5)"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </motion.svg>
+              <div className="flex flex-col items-center gap-1">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-sm ${selectedVersion ? "text-white" : "text-white/40"}`}
+                    style={selectedVersion ? { textShadow: `0 0 20px ${accentColor}40` } : {}}
+                  >
+                    {selectedVersionData?.name || "Select dataset version"}
+                  </span>
+                  <motion.svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    animate={{ rotate: isOpen ? 180 : 0 }}
+                    transition={{ duration: 0.2 }}
+                  >
+                    <path
+                      d="M4 6L8 10L12 6"
+                      stroke="rgba(255,255,255,0.5)"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </motion.svg>
+                </div>
+
+                {selectedVersionData?.uploadedAt && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-mono text-white/40">
+                      {formatCentralTime(selectedVersionData.uploadedAt)}
+                    </span>
+                    <CentralTimeBadge />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -143,7 +197,18 @@ export function VersionSelector({
                           : "transparent",
                     }}
                   >
-                    <span className="relative z-10">{version.name}</span>
+                    <div className="relative z-10 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate">{version.name}</div>
+                        {version.uploadedAt && (
+                          <div className="mt-0.5 text-[10px] font-mono text-white/40">
+                            Uploaded {formatCentralTime(version.uploadedAt)}
+                          </div>
+                        )}
+                      </div>
+
+                      {version.uploadedAt && <CentralTimeBadge />}
+                    </div>
                     {selectedVersion === version.name && (
                       <motion.div
                         layoutId="versionSelected"

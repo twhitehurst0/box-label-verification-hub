@@ -2,6 +2,11 @@
 export interface S3Version {
   name: string
   path: string
+  /**
+   * Best-effort timestamp for when this version was uploaded to S3.
+   * This is derived from S3 object LastModified (not a true folder created-at).
+   */
+  uploadedAt?: string
 }
 
 export interface S3Dataset {
