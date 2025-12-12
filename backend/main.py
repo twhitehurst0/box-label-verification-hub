@@ -53,6 +53,194 @@ from contextlib import asynccontextmanager
 _JOB_PROCESSES: Dict[str, multiprocessing.Process] = {}
 _JOB_WATCH_TASKS: Dict[str, "asyncio.Task[None]"] = {}
 _WATCHER_DB_LOCK = asyncio.Lock()
+_START_LOCK = asyncio.Lock()
+_JOB_QUEUE: "asyncio.Queue[dict]" = asyncio.Queue()
+_DISPATCHER_TASK: Optional["asyncio.Task[None]"] = None
+
+
+async def _prepare_local_dataset(version: str):
+    """Download dataset to local cache and return (images_dir, ground_truth_csv_str, local_image_count)."""
+    from pathlib import Path as _Path
+
+    local_dataset_dir = await asyncio.to_thread(download_dataset_from_s3, version)
+    images_dir = _Path(local_dataset_dir) / "images"
+    ground_truth_csv = _Path(local_dataset_dir) / "ground_truth.csv"
+    ground_truth_csv_str = str(ground_truth_csv) if ground_truth_csv.exists() else None
+
+    local_image_count = len(
+        list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.jpeg")) + list(images_dir.glob("*.png"))
+    )
+    return images_dir, ground_truth_csv_str, local_image_count
+
+
+async def _start_single_job(job_id: str, engine: str, dataset_version: str, preprocessing: str, use_gpu: bool):
+    """Start a single inference worker process for one job id."""
+    images_dir, ground_truth_csv_str, local_image_count = await _prepare_local_dataset(dataset_version)
+    ctx = multiprocessing.get_context("spawn")
+    process = ctx.Process(
+        target=run_inference_process,
+        args=(
+            job_id,
+            engine,
+            str(images_dir),
+            ground_truth_csv_str,
+            dataset_version,
+            local_image_count,
+            preprocessing,
+            use_gpu,
+        ),
+        daemon=True,
+    )
+    process.start()
+    _register_and_watch_job(job_id, process)
+    print(f"[DISPATCHER] Started worker pid={process.pid} for job {job_id} engine={engine} preprocessing={preprocessing}")
+
+
+async def _start_batch_jobs(
+    job_ids: List[str],
+    engine: str,
+    dataset_version: str,
+    preprocessing_options: List[str],
+    use_gpu: bool,
+):
+    """Start a sequential batch worker that runs the provided preprocessing options in order."""
+    images_dir, ground_truth_csv_str, local_image_count = await _prepare_local_dataset(dataset_version)
+
+    job_configs = []
+    for job_id, preprocessing in zip(job_ids, preprocessing_options):
+        job_configs.append(
+            {
+                "job_id": job_id,
+                "engine": engine,
+                "images_dir": str(images_dir),
+                "ground_truth_csv": ground_truth_csv_str,
+                "dataset_version": dataset_version,
+                "total_images": local_image_count,
+                "preprocessing": preprocessing,
+                "use_gpu": use_gpu,
+            }
+        )
+
+    ctx = multiprocessing.get_context("spawn")
+    process = ctx.Process(
+        target=run_sequential_batch_inference,
+        args=(job_configs,),
+        daemon=True,
+    )
+    process.start()
+    for job_id in job_ids:
+        _register_and_watch_job(job_id, process)
+    print(f"[DISPATCHER] Started batch worker pid={process.pid} for {len(job_ids)} jobs engine={engine}")
+
+
+async def _get_oldest_pending_job_from_db() -> Optional[dict]:
+    """Best-effort recovery: start oldest pending job even if queue state is lost."""
+    try:
+        async with _WATCHER_DB_LOCK:
+            service = get_inference_service()
+            jobs = service.list_jobs(limit=200)
+    except Exception:
+        return None
+
+    pending = [j for j in (jobs or []) if j.get("status") == "pending"]
+    if not pending:
+        return None
+
+    # created_at is serialized as string; ISO-like ordering works, but parse defensively.
+    def _key(j: dict):
+        s = j.get("created_at") or ""
+        return s
+
+    pending.sort(key=_key)
+    j = pending[0]
+    return {
+        "type": "single",
+        "job_id": j["job_id"],
+        "engine": j.get("engine", "easyocr"),
+        "dataset_version": j.get("dataset_version", "version-1"),
+        "preprocessing": j.get("preprocessing", "none") or "none",
+        "use_gpu": True,
+    }
+
+
+async def _start_queue_item(item: dict) -> None:
+    """Start a queued item if it still exists and is pending."""
+    job_id = item.get("job_id")
+    if item.get("type") == "batch":
+        job_ids: List[str] = item.get("job_ids", [])
+        if not job_ids:
+            return
+        # If the batch was deleted/cancelled, skip.
+        async with _WATCHER_DB_LOCK:
+            service = get_inference_service()
+            any_exists = any(service.get_job_status(jid) is not None for jid in job_ids[:3])
+        if not any_exists:
+            return
+
+        await _start_batch_jobs(
+            job_ids=job_ids,
+            engine=item.get("engine", "easyocr"),
+            dataset_version=item.get("dataset_version", "version-1"),
+            preprocessing_options=item.get("preprocessing_options", []),
+            use_gpu=bool(item.get("use_gpu", True)),
+        )
+        return
+
+    if not job_id:
+        return
+
+    async with _WATCHER_DB_LOCK:
+        service = get_inference_service()
+        status = service.get_job_status(job_id)
+    if not status or status.get("status") != "pending":
+        return
+
+    await _start_single_job(
+        job_id=job_id,
+        engine=item.get("engine", status.get("engine", "easyocr")),
+        dataset_version=item.get("dataset_version", status.get("dataset_version", "version-1")),
+        preprocessing=item.get("preprocessing", status.get("preprocessing", "none") or "none"),
+        use_gpu=bool(item.get("use_gpu", True)),
+    )
+
+
+async def _dispatcher_loop() -> None:
+    """Background dispatcher: runs queued jobs sequentially (1 worker at a time)."""
+    print("[DISPATCHER] started")
+    while True:
+        try:
+            if _get_active_worker_pids():
+                await asyncio.sleep(1)
+                continue
+
+            item: Optional[dict] = None
+            try:
+                item = _JOB_QUEUE.get_nowait()
+            except asyncio.QueueEmpty:
+                item = None
+
+            if item is None:
+                item = await _get_oldest_pending_job_from_db()
+
+            if item is None:
+                await asyncio.sleep(1)
+                continue
+
+            async with _START_LOCK:
+                # Re-check within lock
+                if _get_active_worker_pids():
+                    # Put it back and try later
+                    await _JOB_QUEUE.put(item)
+                    await asyncio.sleep(1)
+                    continue
+                await _start_queue_item(item)
+        except asyncio.CancelledError:
+            print("[DISPATCHER] cancelled")
+            return
+        except Exception as e:
+            import traceback as _tb
+            print(f"[DISPATCHER ERROR] {type(e).__name__}: {e}\n{_tb.format_exc()}")
+            await asyncio.sleep(2)
 
 async def _terminate_process(process: multiprocessing.Process, reason: str, timeout_s: float = 5.0) -> bool:
     """Best-effort terminate a worker process so new jobs can start."""
@@ -227,6 +415,8 @@ class StartBatchInferenceResponse(BaseModel):
     job_ids: List[str]
     message: str
     total_jobs: int
+    queued: bool = False
+    queue_position: Optional[int] = None
 
 
 class StartInferenceResponse(BaseModel):
@@ -235,6 +425,8 @@ class StartInferenceResponse(BaseModel):
     job_id: Optional[str] = None
     message: str
     total_images: Optional[int] = None
+    queued: bool = False
+    queue_position: Optional[int] = None
 
 
 class JobStatusResponse(BaseModel):
@@ -317,9 +509,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: Failed to initialize Pixeltable tables: {e}")
         # Continue anyway - tables might already exist
+
+    # Start background dispatcher (queues pending jobs and runs them one-at-a-time)
+    global _DISPATCHER_TASK
+    if _DISPATCHER_TASK is None or _DISPATCHER_TASK.done():
+        _DISPATCHER_TASK = asyncio.create_task(_dispatcher_loop())
     yield
     # Shutdown: cleanup if needed
     print("Shutting down...")
+    if _DISPATCHER_TASK is not None and not _DISPATCHER_TASK.done():
+        _DISPATCHER_TASK.cancel()
+        try:
+            await _DISPATCHER_TASK
+        except Exception:
+            pass
 
 app = FastAPI(
     title="Box Label OCR Model Testing API",
@@ -655,23 +858,6 @@ async def start_inference(request: StartInferenceRequest):
             detail=f"Invalid engine: {request.engine}. Must be 'easyocr', 'paddleocr', or 'smolvlm2'"
         )
 
-    # Per-instance concurrency guardrail (prevents OOM/SIGKILL churn on small App Runner instances)
-    max_concurrent = int(os.environ.get("MAX_CONCURRENT_JOBS", "1") or "1")
-    if max_concurrent < 1:
-        max_concurrent = 1
-    active = _get_active_worker_pids()
-    if len(active) >= max_concurrent:
-        active_job_ids = sorted({jid for jid, p in _JOB_PROCESSES.items() if p is not None and p.pid in active})
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "too_many_running_jobs",
-                "message": f"This instance is already running {len(active)} job(s). Try again later.",
-                "active_job_ids": active_job_ids,
-                "max_concurrent_jobs": max_concurrent,
-            },
-        )
-
     # Find dataset
     datasets = list_available_datasets()
     dataset = next(
@@ -685,18 +871,7 @@ async def start_inference(request: StartInferenceRequest):
             detail=f"Dataset not found: {request.dataset_version}"
         )
 
-    # Download dataset from S3 to local cache
-    try:
-        local_dataset_dir = download_dataset_from_s3(request.dataset_version)
-        images_dir = local_dataset_dir / "images"
-        ground_truth_csv = local_dataset_dir / "ground_truth.csv"
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to download dataset from S3: {str(e)}"
-        )
-
-    ground_truth_csv_str = str(ground_truth_csv) if ground_truth_csv.exists() else None
+    preprocessing = "none" if request.engine == "smolvlm2" else (request.preprocessing or "none")
 
     # Get service and create job in main process
     try:
@@ -715,7 +890,7 @@ async def start_inference(request: StartInferenceRequest):
             dataset_version=request.dataset_version,
             dataset_name=request.dataset_name,
             total_images=dataset.image_count,
-            preprocessing=request.preprocessing,
+            preprocessing=preprocessing,
         )
     except Exception as e:
         import traceback
@@ -725,33 +900,25 @@ async def start_inference(request: StartInferenceRequest):
             detail=f"Failed to create job: {type(e).__name__}: {str(e)}\n{tb[:1000]}"
         )
 
-    # Start inference in a separate PROCESS (not thread)
-    # This gives the subprocess its own Pixeltable connection
-    ctx = multiprocessing.get_context("spawn")
-    process = ctx.Process(
-        target=run_inference_process,
-        args=(
-            job_id,
-            request.engine,
-            str(images_dir),
-            ground_truth_csv_str,
-            request.dataset_version,
-            dataset.image_count,
-            request.preprocessing,
-            request.use_gpu,
-        ),
-        daemon=True,  # Process will terminate when main process exits
-    )
-    process.start()
-
-    print(f"Started inference process (PID: {process.pid}) for job {job_id} with preprocessing: {request.preprocessing}")
-    _register_and_watch_job(job_id, process)
+    # Enqueue the job; the dispatcher will run jobs sequentially as capacity is available.
+    queue_position = _JOB_QUEUE.qsize() + 1
+    await _JOB_QUEUE.put({
+        "type": "single",
+        "job_id": job_id,
+        "engine": request.engine,
+        "dataset_version": request.dataset_version,
+        "preprocessing": preprocessing,
+        "use_gpu": request.use_gpu,
+    })
+    print(f"[QUEUE] Enqueued job {job_id} engine={request.engine} preprocessing={preprocessing} pos={queue_position}")
 
     return StartInferenceResponse(
         success=True,
         job_id=job_id,
-        message=f"Inference job started with {request.engine}",
+        message=f"Job queued for {request.engine}",
         total_images=dataset.image_count,
+        queued=True,
+        queue_position=queue_position,
     )
 
 
@@ -861,23 +1028,6 @@ async def start_batch_inference(request: StartBatchInferenceRequest):
             detail=f"Invalid engine: {request.engine}. Must be 'easyocr' or 'paddleocr'"
         )
 
-    # Per-instance concurrency guardrail
-    max_concurrent = int(os.environ.get("MAX_CONCURRENT_JOBS", "1") or "1")
-    if max_concurrent < 1:
-        max_concurrent = 1
-    active = _get_active_worker_pids()
-    if len(active) >= max_concurrent:
-        active_job_ids = sorted({jid for jid, p in _JOB_PROCESSES.items() if p is not None and p.pid in active})
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "too_many_running_jobs",
-                "message": f"This instance is already running {len(active)} job(s). Try again later.",
-                "active_job_ids": active_job_ids,
-                "max_concurrent_jobs": max_concurrent,
-            },
-        )
-
     # Find dataset
     datasets = list_available_datasets()
     dataset = next(
@@ -891,39 +1041,9 @@ async def start_batch_inference(request: StartBatchInferenceRequest):
             detail=f"Dataset not found: {request.dataset_version}"
         )
 
-    # Download dataset from S3 to local cache (batch runs need local filesystem paths)
-    try:
-        local_dataset_dir = download_dataset_from_s3(request.dataset_version)
-        images_dir = local_dataset_dir / "images"
-        ground_truth_csv = local_dataset_dir / "ground_truth.csv"
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to download dataset from S3: {str(e)}"
-        )
-
-    ground_truth_csv_str = str(ground_truth_csv) if ground_truth_csv.exists() else None
-
-    # Validate dataset contents locally
-    try:
-        local_image_count = len(
-            list(images_dir.glob("*.jpg")) +
-            list(images_dir.glob("*.jpeg")) +
-            list(images_dir.glob("*.png"))
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to read local dataset images: {e}")
-
-    if local_image_count <= 0:
-        raise HTTPException(
-            status_code=500,
-            detail=f"No images found after download in {images_dir}",
-        )
-
     # Get service
     service = get_inference_service()
     job_ids = []
-    job_configs = []
 
     # Create all jobs first (in pending state)
     for preprocessing in request.preprocessing_options:
@@ -931,39 +1051,31 @@ async def start_batch_inference(request: StartBatchInferenceRequest):
             engine=request.engine,
             dataset_version=request.dataset_version,
             dataset_name=request.dataset_name,
-            total_images=local_image_count,
+            total_images=dataset.image_count,
             preprocessing=preprocessing,
         )
         job_ids.append(job_id)
-        job_configs.append({
-            "job_id": job_id,
-            "engine": request.engine,
-            "images_dir": str(images_dir),
-            "ground_truth_csv": ground_truth_csv_str,
-            "dataset_version": request.dataset_version,
-            "total_images": local_image_count,
-            "preprocessing": preprocessing,
-            "use_gpu": request.use_gpu,
-        })
         print(f"Created batch job {job_id} with preprocessing: {preprocessing}")
 
-    # Start a single process that runs all jobs sequentially
-    ctx = multiprocessing.get_context("spawn")
-    process = ctx.Process(
-        target=run_sequential_batch_inference,
-        args=(job_configs,),
-        daemon=True,
-    )
-    process.start()
-    print(f"Started sequential batch inference process (PID: {process.pid}) for {len(job_ids)} jobs")
-    for job_id in job_ids:
-        _register_and_watch_job(job_id, process)
+    # Enqueue a single batch item; the dispatcher will start the sequential batch worker when capacity is available.
+    queue_position = _JOB_QUEUE.qsize() + 1
+    await _JOB_QUEUE.put({
+        "type": "batch",
+        "job_ids": job_ids,
+        "engine": request.engine,
+        "dataset_version": request.dataset_version,
+        "preprocessing_options": request.preprocessing_options,
+        "use_gpu": request.use_gpu,
+    })
+    print(f"[QUEUE] Enqueued batch {len(job_ids)} jobs engine={request.engine} pos={queue_position}")
 
     return StartBatchInferenceResponse(
         success=True,
         job_ids=job_ids,
-        message=f"Started {len(job_ids)} inference jobs (running sequentially to avoid conflicts)",
+        message=f"Queued {len(job_ids)} inference jobs (will run sequentially)",
         total_jobs=len(job_ids),
+        queued=True,
+        queue_position=queue_position,
     )
 
 

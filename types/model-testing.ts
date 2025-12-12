@@ -102,6 +102,8 @@ export interface StartInferenceResponse {
   job_id?: string
   message: string
   total_images?: number
+  queued?: boolean
+  queue_position?: number | null
 }
 
 // Available OCR Engines
@@ -177,6 +179,8 @@ export interface StartBatchInferenceResponse {
   job_ids: string[]
   message: string
   total_jobs: number
+  queued?: boolean
+  queue_position?: number | null
 }
 
 // Comparison Types for Run All feature

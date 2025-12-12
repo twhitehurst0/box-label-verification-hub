@@ -52,6 +52,7 @@ export function ModelTestingConsole() {
 
   // Error state
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">("checking")
 
   // Delete state
@@ -191,6 +192,7 @@ export function ModelTestingConsole() {
       setRunningInference(true)
       setProgress(0)
       setError(null)
+      setNotice(null)
 
       const res = await fetch(`${API_BASE}/inference/start`, {
         method: "POST",
@@ -200,6 +202,7 @@ export function ModelTestingConsole() {
           dataset_version: selectedDataset,
           dataset_name: "default",
           preprocessing,
+          use_gpu: true,
         }),
       })
 
@@ -212,15 +215,20 @@ export function ModelTestingConsole() {
       const typed: StartInferenceResponse = data
 
       if (typed.success && typed.job_id) {
-        setCurrentJobId(typed.job_id)
         fetchJobs()
+        if (typed.queued) {
+          const pos = typed.queue_position ? ` (#${typed.queue_position})` : ""
+          setNotice(`Queued${pos}. It will start automatically when capacity is available.`)
+        }
       } else {
         setError(typed.message || "Failed to start inference")
-        setRunningInference(false)
       }
     } catch (err) {
       setError(`Failed to start inference: ${err instanceof Error ? err.message : "Unknown error"}`)
+    } finally {
       setRunningInference(false)
+      setCurrentJobId(null)
+      setProgress(0)
     }
   }
 
@@ -232,6 +240,7 @@ export function ModelTestingConsole() {
     try {
       setRunningBatch(true)
       setError(null)
+      setNotice(null)
 
       // Initialize comparisons with pending status
       const initialComparisons: PreprocessingComparison[] = selectedPreprocessing.map((p) => ({
@@ -265,26 +274,31 @@ export function ModelTestingConsole() {
 
       if (typed.success && typed.job_ids) {
         // Update comparisons with job IDs
+        const initialStatus = typed.queued ? ("pending" as const) : ("running" as const)
         const updatedComparisons = selectedPreprocessing.map((p, i) => ({
           preprocessing: p,
           job_id: typed.job_ids[i],
           summary: null,
-          status: "running" as const,
+          status: initialStatus,
         }))
         setComparisons(updatedComparisons)
         fetchJobs()
 
         // Start polling for batch results
         pollBatchResults(typed.job_ids, updatedComparisons)
+        if (typed.queued) {
+          const pos = typed.queue_position ? ` (#${typed.queue_position})` : ""
+          setNotice(`Batch queued${pos}. Jobs will run sequentially.`)
+        }
       } else {
         setError(typed.message || "Failed to start batch inference")
-        setRunningBatch(false)
         setShowComparison(false)
       }
     } catch (err) {
       setError(`Failed to start batch inference: ${err instanceof Error ? err.message : "Unknown error"}`)
-      setRunningBatch(false)
       setShowComparison(false)
+    } finally {
+      setRunningBatch(false)
     }
   }
 
@@ -434,8 +448,7 @@ export function ModelTestingConsole() {
   }
 
   const hasActiveJobs = jobs.some((j) => j.status === "running" || j.status === "pending")
-  const canRunInference =
-    selectedEngine && selectedDataset && !runningInference && !runningBatch && apiStatus === "online" && !hasActiveJobs
+  const canRunInference = selectedEngine && selectedDataset && !runningInference && !runningBatch && apiStatus === "online"
   const supportsPreprocessing = selectedEngine !== "smolvlm2"
   const canRunBatch = supportsPreprocessing && canRunInference && selectedPreprocessing.length >= 2
   const showBatchButton = supportsPreprocessing && selectedPreprocessing.length >= 2
@@ -589,6 +602,32 @@ export function ModelTestingConsole() {
             )}
           </AnimatePresence>
 
+          {/* Notice display (non-error) */}
+          <AnimatePresence>
+            {notice && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+                className="mt-4 p-4 rounded-xl overflow-hidden"
+                style={{
+                  background: `${ACCENT_COLOR}12`,
+                  border: `1px solid ${ACCENT_COLOR}35`,
+                }}
+              >
+                <div className="flex items-center justify-between">
+                  <p className="text-white/80 text-sm">{notice}</p>
+                  <button
+                    onClick={() => setNotice(null)}
+                    className="text-white/40 text-xs hover:text-white/70"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           {apiStatus === "offline" && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
@@ -711,7 +750,7 @@ export function ModelTestingConsole() {
 
                 {hasActiveJobs && (
                   <div className="mt-3 text-[10px] font-mono text-white/40 leading-relaxed">
-                    A job is already running on the backend. Wait for it to finish, or delete it from the jobs table to free capacity.
+                    Jobs run one-at-a-time on the backend; additional runs you start here will be queued automatically.
                   </div>
                 )}
               </div>
