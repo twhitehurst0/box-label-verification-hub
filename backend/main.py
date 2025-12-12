@@ -43,7 +43,7 @@ S3_PREFIX = "prod-boxlabel/box-label-OCR-test-data/"
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from inference_service import get_inference_service, InferenceService
-from pixeltable_schema import setup_all_tables
+from pixeltable_schema import setup_all_tables, get_job_summaries_table
 from contextlib import asynccontextmanager
 
 # ============================================================================
@@ -1084,6 +1084,33 @@ async def list_jobs(limit: int = 50):
     """List recent inference jobs."""
     service = get_inference_service()
     return service.list_jobs(limit=limit)
+
+
+@app.get("/inference/job-summaries", response_model=List[dict])
+async def list_job_summaries(limit: int = 50):
+    """List recent job summaries (for Results dashboard)."""
+    summary_table = get_job_summaries_table()
+    results = summary_table.order_by(summary_table.created_at, asc=False).limit(limit).collect()
+
+    summaries: List[dict] = []
+    if results and len(results) > 0:
+        import json as _json
+        for row in results.to_pandas().itertuples():
+            summaries.append({
+                "summary_id": getattr(row, "summary_id", None),
+                "job_id": row.job_id,
+                "engine": row.engine,
+                "dataset_version": row.dataset_version,
+                "dataset_name": row.dataset_name,
+                "total_images": int(row.total_images),
+                "overall_exact_match_rate": float(row.overall_exact_match_rate),
+                "overall_normalized_match_rate": float(row.overall_normalized_match_rate),
+                "overall_cer": float(row.overall_cer),
+                "per_field_stats": _json.loads(row.per_field_stats_json) if getattr(row, "per_field_stats_json", None) else {},
+                "created_at": str(row.created_at) if getattr(row, "created_at", None) else None,
+            })
+
+    return summaries
 
 
 @app.get("/inference/jobs/{job_id}/status", response_model=JobStatusResponse)
