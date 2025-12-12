@@ -35,7 +35,8 @@ class SmolVLM2Engine:
     ):
         self.api_key = api_key or os.environ.get("ROBOFLOW_API_KEY", "") or ROBOFLOW_API_KEY
         self.project = project or os.environ.get("SMOLVLM2_PROJECT", "") or SMOLVLM2_PROJECT
-        self.version = version or int(os.environ.get("SMOLVLM2_VERSION", "0") or SMOLVLM2_VERSION or 1)
+        # Use env override if present; otherwise fall back to config default.
+        self.version = version or int(os.environ.get("SMOLVLM2_VERSION", "") or SMOLVLM2_VERSION or 1)
         self.api_url = api_url or os.environ.get("SMOLVLM2_API_URL", "") or SMOLVLM2_API_URL
 
         if not self.api_key:
