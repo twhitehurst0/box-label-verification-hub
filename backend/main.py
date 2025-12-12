@@ -1045,17 +1045,32 @@ async def start_batch_inference(request: StartBatchInferenceRequest):
     service = get_inference_service()
     job_ids = []
 
-    # Create all jobs first (in pending state)
-    for preprocessing in request.preprocessing_options:
-        job_id = service.create_job(
-            engine=request.engine,
-            dataset_version=request.dataset_version,
-            dataset_name=request.dataset_name,
-            total_images=dataset.image_count,
-            preprocessing=preprocessing,
+    # Create all jobs first (in pending state).
+    # If creation fails mid-way, best-effort delete any already-created jobs to avoid orphan rows.
+    try:
+        for preprocessing in request.preprocessing_options:
+            job_id = service.create_job(
+                engine=request.engine,
+                dataset_version=request.dataset_version,
+                dataset_name=request.dataset_name,
+                total_images=dataset.image_count,
+                preprocessing=preprocessing,
+            )
+            job_ids.append(job_id)
+            print(f"Created batch job {job_id} with preprocessing: {preprocessing}")
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        # Roll back any partially-created jobs
+        for jid in job_ids:
+            try:
+                service.delete_job(jid)
+            except Exception:
+                pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to create batch jobs: {type(e).__name__}: {str(e)}\n{tb[:1000]}",
         )
-        job_ids.append(job_id)
-        print(f"Created batch job {job_id} with preprocessing: {preprocessing}")
 
     # Enqueue a single batch item; the dispatcher will start the sequential batch worker when capacity is available.
     queue_position = _JOB_QUEUE.qsize() + 1

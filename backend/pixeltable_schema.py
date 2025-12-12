@@ -40,6 +40,14 @@ def retry_on_db_error(max_retries: int = 3, delay: float = 0.5):
                 try:
                     return func(*args, **kwargs)
                 except Exception as e:
+                    # Pixeltable occasionally throws bare AssertionError under contention.
+                    # These often succeed on retry and the exception may have an empty message.
+                    if isinstance(e, AssertionError):
+                        last_error = e
+                        print(f"Pixeltable assertion error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}")
+                        time.sleep(delay * (attempt + 1))
+                        continue
+
                     error_str = str(e).lower()
                     # Check if this is a retryable database error
                     if any(err in error_str for err in [
@@ -54,6 +62,11 @@ def retry_on_db_error(max_retries: int = 3, delay: float = 0.5):
                         'closed automatically',  # "has been closed automatically"
                         'cursor',                # Cursor-related errors
                         'invalidrequesterror',   # SQLAlchemy invalid request
+                        'deadlock',              # deadlock detected
+                        'could not serialize',   # serialization failure
+                        'serialization failure',
+                        'lock timeout',
+                        'too many connections',
                     ]):
                         last_error = e
                         print(f"Pixeltable DB error (attempt {attempt + 1}/{max_retries}): {e}")
