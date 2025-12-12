@@ -49,6 +49,7 @@ export function ModelTestingConsole() {
   const [viewingResults, setViewingResults] = useState<string | null>(null)
   const [resultsData, setResultsData] = useState<JobResults | null>(null)
   const [loadingResults, setLoadingResults] = useState(false)
+  const [rightTab, setRightTab] = useState<"jobs" | "completed" | "results">("jobs")
 
   // Error state
   const [error, setError] = useState<string | null>(null)
@@ -406,6 +407,12 @@ export function ModelTestingConsole() {
 
       // Refresh jobs list
       await fetchJobs()
+
+      // If the deleted job is currently being viewed, close/clear it.
+      if (viewingResults === jobId) {
+        setViewingResults(null)
+        setResultsData(null)
+      }
     } catch (err) {
       console.error("Failed to delete job:", err)
       setError(`Failed to delete job: ${err instanceof Error ? err.message : "Unknown error"}`)
@@ -439,6 +446,12 @@ export function ModelTestingConsole() {
 
       // Refresh jobs list
       await fetchJobs()
+
+      // If the currently viewed job was deleted, close/clear it.
+      if (viewingResults && jobIds.includes(viewingResults)) {
+        setViewingResults(null)
+        setResultsData(null)
+      }
     } catch (err) {
       console.error("Failed to delete jobs:", err)
       setError(`Failed to delete jobs: ${err instanceof Error ? err.message : "Unknown error"}`)
@@ -446,6 +459,17 @@ export function ModelTestingConsole() {
       setDeletingBatch(false)
     }
   }
+
+  // Partition jobs into Jobs vs Completed (completed >= 30m old)
+  const nowMs = Date.now()
+  const archivedCompletedJobs = jobs.filter((j) => {
+    if (j.status !== "completed") return false
+    if (!j.completed_at) return false
+    const ts = Date.parse(j.completed_at) || Date.parse(j.completed_at.replace(" ", "T"))
+    if (!Number.isFinite(ts)) return false
+    return nowMs - ts >= 30 * 60 * 1000
+  })
+  const jobsTabJobs = jobs.filter((j) => !archivedCompletedJobs.some((c) => c.job_id === j.job_id))
 
   const hasActiveJobs = jobs.some((j) => j.status === "running" || j.status === "pending")
   const canRunInference = selectedEngine && selectedDataset && !runningInference && !runningBatch && apiStatus === "online"
@@ -782,17 +806,66 @@ export function ModelTestingConsole() {
               />
 
               <div className="p-6">
-                <JobsTable
-                  jobs={jobs}
-                  loading={loadingJobs}
-                  onViewResults={handleViewResults}
-                  onDeleteJob={handleDeleteJob}
-                  onDeleteSelected={handleDeleteSelected}
-                  onRefresh={fetchJobs}
-                  accentColor={ACCENT_COLOR}
-                  deletingJobId={deletingJobId}
-                  deletingBatch={deletingBatch}
-                />
+                {/* Right-panel tabs */}
+                <div className="flex items-center gap-2 mb-5">
+                  {([
+                    { id: "jobs", label: "Jobs" },
+                    { id: "completed", label: "Completed" },
+                    { id: "results", label: "Results" },
+                  ] as const).map((t) => {
+                    const active = rightTab === t.id
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => setRightTab(t.id)}
+                        className="px-3 py-1.5 rounded-lg text-[10px] font-mono uppercase tracking-wider transition-all"
+                        style={{
+                          background: active ? `${ACCENT_COLOR}22` : "rgba(255,255,255,0.04)",
+                          border: active ? `1px solid ${ACCENT_COLOR}55` : "1px solid rgba(255,255,255,0.08)",
+                          color: active ? ACCENT_COLOR : "rgba(255,255,255,0.55)",
+                        }}
+                      >
+                        {t.label}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {rightTab === "jobs" && (
+                  <JobsTable
+                    title="Jobs"
+                    jobs={jobsTabJobs}
+                    loading={loadingJobs}
+                    onViewResults={handleViewResults}
+                    onDeleteJob={handleDeleteJob}
+                    onDeleteSelected={handleDeleteSelected}
+                    onRefresh={fetchJobs}
+                    accentColor={ACCENT_COLOR}
+                    deletingJobId={deletingJobId}
+                    deletingBatch={deletingBatch}
+                  />
+                )}
+
+                {rightTab === "completed" && (
+                  <JobsTable
+                    title="Completed"
+                    jobs={archivedCompletedJobs}
+                    loading={loadingJobs}
+                    onViewResults={handleViewResults}
+                    onDeleteJob={handleDeleteJob}
+                    onDeleteSelected={handleDeleteSelected}
+                    onRefresh={fetchJobs}
+                    accentColor={ACCENT_COLOR}
+                    deletingJobId={deletingJobId}
+                    deletingBatch={deletingBatch}
+                  />
+                )}
+
+                {rightTab === "results" && (
+                  <div className="text-white/40 text-sm">
+                    Results dashboard is coming next (this tab will become the visual hub for completed runs).
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>

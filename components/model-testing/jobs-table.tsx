@@ -8,6 +8,7 @@ import { PREPROCESSING_OPTIONS } from "@/types/model-testing"
 interface JobsTableProps {
   jobs: InferenceJob[]
   loading: boolean
+  title?: string
   onViewResults: (jobId: string) => void
   onDeleteJob: (jobId: string) => void
   onDeleteSelected: (jobIds: string[]) => void
@@ -28,6 +29,7 @@ const statusConfig: Record<JobStatus, { color: string; bgColor: string; label: s
 export function JobsTable({
   jobs,
   loading,
+  title = "Jobs",
   onViewResults,
   onDeleteJob,
   onDeleteSelected,
@@ -192,7 +194,7 @@ export function JobsTable({
             className="text-[11px] font-semibold uppercase tracking-[0.15em]"
             style={{ color: "rgba(255,255,255,0.5)" }}
           >
-            Recent Jobs
+            {title}
           </h3>
           <AnimatePresence>
             {hasSelection && (
@@ -481,7 +483,13 @@ export function JobsTable({
                         {/* Engine */}
                         <td className="px-4 py-3">
                           <span className="text-white/80 text-xs font-medium">
-                            {job.engine === "easyocr" ? "⚡ Easy" : "🎯 Paddle"}
+                            {job.engine === "easyocr"
+                              ? "⚡ Easy"
+                              : job.engine === "paddleocr"
+                                ? "🎯 Paddle"
+                                : job.engine === "smolvlm2"
+                                  ? "🧠 SmolVLM2"
+                                  : job.engine}
                           </span>
                         </td>
 
