@@ -28,6 +28,8 @@ interface ResultsTabProps {
   loadingResults: boolean
   onSelectJob: (jobId: string) => void
   onClearSelection: () => void
+  onDeleteJob?: (jobId: string) => void
+  deletingJobId?: string | null
 }
 
 function parseBackendTimestampMs(dateStr: string | null | undefined): number | null {
@@ -76,6 +78,8 @@ export function ResultsTab({
   loadingResults,
   onSelectJob,
   onClearSelection,
+  onDeleteJob,
+  deletingJobId,
 }: ResultsTabProps) {
   const [active, setActive] = useState<ResultsSubTab>("dashboard")
   const [summaries, setSummaries] = useState<JobSummaryRow[]>([])
@@ -245,22 +249,46 @@ export function ResultsTab({
           </motion.button>
 
           {active === "run" && selectedJobId && (
-            <motion.button
-              onClick={() => {
-                onClearSelection()
-                setActive("dashboard")
-              }}
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wide transition-all"
-              style={{
-                background: `${accentColor}18`,
-                border: `1px solid ${accentColor}35`,
-                color: accentColor,
-              }}
-            >
-              <span>Back</span>
-            </motion.button>
+            <>
+              {onDeleteJob && (
+                <motion.button
+                  onClick={() => {
+                    if (confirm(`Delete job ${selectedJobId.slice(0, 8)}...? This will remove all data from Pixeltable.`)) {
+                      onDeleteJob(selectedJobId)
+                    }
+                  }}
+                  disabled={deletingJobId === selectedJobId}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wide transition-all"
+                  style={{
+                    background: "linear-gradient(135deg, rgba(239,68,68,0.2) 0%, rgba(239,68,68,0.1) 100%)",
+                    border: "1px solid rgba(239,68,68,0.3)",
+                    color: "#f87171",
+                    opacity: deletingJobId === selectedJobId ? 0.6 : 1,
+                  }}
+                >
+                  Delete
+                </motion.button>
+              )}
+
+              <motion.button
+                onClick={() => {
+                  onClearSelection()
+                  setActive("dashboard")
+                }}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wide transition-all"
+                style={{
+                  background: `${accentColor}18`,
+                  border: `1px solid ${accentColor}35`,
+                  color: accentColor,
+                }}
+              >
+                <span>Back</span>
+              </motion.button>
+            </>
           )}
         </div>
       </div>

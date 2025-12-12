@@ -891,6 +891,8 @@ export function ModelTestingConsole() {
                       setSelectedResultJobId(null)
                       setResultsData(null)
                     }}
+                    onDeleteJob={handleDeleteJob}
+                    deletingJobId={deletingJobId}
                   />
                 )}
               </div>
