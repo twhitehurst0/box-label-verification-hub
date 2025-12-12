@@ -76,6 +76,20 @@ export interface JobSummary {
   per_field_stats: Record<string, FieldStats>
 }
 
+export interface JobSummaryRow {
+  summary_id: string | null
+  job_id: string
+  engine: OCREngine
+  dataset_version: string
+  dataset_name: string
+  total_images: number
+  overall_exact_match_rate: number
+  overall_normalized_match_rate: number
+  overall_cer: number
+  per_field_stats: Record<string, FieldStats>
+  created_at: string | null
+}
+
 export interface DetectionResult {
   class: string
   confidence: number

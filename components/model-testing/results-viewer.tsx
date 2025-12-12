@@ -10,6 +10,7 @@ interface ResultsViewerProps {
   loading: boolean
   onClose: () => void
   accentColor: string
+  mode?: "modal" | "inline"
 }
 
 export function ResultsViewer({
@@ -17,6 +18,7 @@ export function ResultsViewer({
   loading,
   onClose,
   accentColor,
+  mode = "modal",
 }: ResultsViewerProps) {
   const [activeTab, setActiveTab] = useState<"summary" | "fields" | "images" | "visuals">("summary")
 
@@ -25,29 +27,20 @@ export function ResultsViewer({
   const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`
   const formatCER = (value: number) => value.toFixed(3)
 
-  return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        className="fixed inset-0 z-50 flex items-center justify-center p-4"
-        style={{ background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)" }}
-        onClick={onClose}
-      >
-        <motion.div
-          initial={{ scale: 0.95, y: 20 }}
-          animate={{ scale: 1, y: 0 }}
-          exit={{ scale: 0.95, y: 20 }}
-          transition={{ type: "spring", damping: 25 }}
-          className="relative w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl"
-          style={{
-            background: "linear-gradient(135deg, rgba(20,20,25,0.98) 0%, rgba(10,10,15,0.98) 100%)",
-            border: `1px solid ${accentColor}30`,
-            boxShadow: `0 30px 80px rgba(0,0,0,0.7), 0 0 60px ${accentColor}15`,
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
+  const panel = (
+    <motion.div
+      initial={mode === "modal" ? { scale: 0.95, y: 20 } : { opacity: 0, y: 10 }}
+      animate={mode === "modal" ? { scale: 1, y: 0 } : { opacity: 1, y: 0 }}
+      exit={mode === "modal" ? { scale: 0.95, y: 20 } : { opacity: 0, y: -10 }}
+      transition={mode === "modal" ? { type: "spring", damping: 25 } : { duration: 0.2 }}
+      className={mode === "modal" ? "relative w-full max-w-4xl max-h-[85vh] overflow-hidden rounded-2xl" : "relative w-full overflow-hidden rounded-2xl"}
+      style={{
+        background: "linear-gradient(135deg, rgba(20,20,25,0.98) 0%, rgba(10,10,15,0.98) 100%)",
+        border: `1px solid ${accentColor}30`,
+        boxShadow: `0 30px 80px rgba(0,0,0,0.7), 0 0 60px ${accentColor}15`,
+      }}
+      onClick={(e) => mode === "modal" && e.stopPropagation()}
+    >
           {/* Header decoration line */}
           <div
             className="absolute top-0 left-0 right-0 h-[1px]"
@@ -137,7 +130,7 @@ export function ResultsViewer({
           </div>
 
           {/* Content */}
-          <div className="p-6 overflow-y-auto max-h-[calc(85vh-140px)]">
+          <div className={mode === "modal" ? "p-6 overflow-y-auto max-h-[calc(85vh-140px)]" : "p-6 overflow-y-auto max-h-[60vh]"}>
             {loading ? (
               <div className="flex flex-col items-center justify-center py-12">
                 <motion.div
@@ -207,7 +200,24 @@ export function ResultsViewer({
               </div>
             )}
           </div>
-        </motion.div>
+    </motion.div>
+  )
+
+  if (mode === "inline") {
+    return panel
+  }
+
+  return (
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 flex items-center justify-center p-4"
+        style={{ background: "rgba(0,0,0,0.8)", backdropFilter: "blur(8px)" }}
+        onClick={onClose}
+      >
+        {panel}
       </motion.div>
     </AnimatePresence>
   )

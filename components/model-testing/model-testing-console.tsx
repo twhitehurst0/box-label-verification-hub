@@ -8,7 +8,7 @@ import { PreprocessingSelector } from "./preprocessing-selector"
 import { InferenceButton } from "./inference-button"
 import { RunAllButton } from "./run-all-button"
 import { JobsTable } from "./jobs-table"
-import { ResultsViewer } from "./results-viewer"
+import { ResultsTab } from "./results-tab"
 import { ComparisonViewer } from "./comparison-viewer"
 import type {
   OCREngine,
@@ -46,7 +46,7 @@ export function ModelTestingConsole() {
   const [progress, setProgress] = useState(0)
 
   // Results viewer state
-  const [viewingResults, setViewingResults] = useState<string | null>(null)
+  const [selectedResultJobId, setSelectedResultJobId] = useState<string | null>(null)
   const [resultsData, setResultsData] = useState<JobResults | null>(null)
   const [loadingResults, setLoadingResults] = useState(false)
   const [rightTab, setRightTab] = useState<"jobs" | "completed" | "results">("jobs")
@@ -78,6 +78,22 @@ export function ModelTestingConsole() {
     }
     if (typeof data?.message === "string") return data.message
     return `Request failed (HTTP ${status})`
+  }
+
+  const parseBackendTimestampMs = (dateStr: string | null | undefined): number | null => {
+    if (!dateStr) return null
+    let s = dateStr.trim()
+    if (!s) return null
+    if (s.includes(" ") && !s.includes("T")) s = s.replace(" ", "T")
+    const m = s.match(/^(.+T\\d\\d:\\d\\d:\\d\\d)(\\.(\\d+))?$/)
+    if (m) {
+      const base = m[1]
+      const frac = m[3] || ""
+      const ms = frac ? `.${frac.slice(0, 3).padEnd(3, "0")}` : ""
+      s = `${base}${ms}Z`
+    }
+    const t = Date.parse(s)
+    return Number.isFinite(t) ? t : null
   }
 
   // SmolVLM2 is end-to-end (no preprocessing); keep selection sane.
@@ -373,8 +389,10 @@ export function ModelTestingConsole() {
 
   // View results
   const handleViewResults = async (jobId: string) => {
-    setViewingResults(jobId)
+    setRightTab("results")
+    setSelectedResultJobId(jobId)
     setLoadingResults(true)
+    setResultsData(null)
 
     try {
       const res = await fetch(`${API_BASE}/inference/jobs/${jobId}/results`)
@@ -386,7 +404,7 @@ export function ModelTestingConsole() {
     } catch (err) {
       console.error("Failed to fetch results:", err)
       setError(`Failed to fetch results: ${err instanceof Error ? err.message : "Unknown error"}`)
-      setViewingResults(null)
+      setSelectedResultJobId(null)
     } finally {
       setLoadingResults(false)
     }
@@ -409,8 +427,8 @@ export function ModelTestingConsole() {
       await fetchJobs()
 
       // If the deleted job is currently being viewed, close/clear it.
-      if (viewingResults === jobId) {
-        setViewingResults(null)
+      if (selectedResultJobId === jobId) {
+        setSelectedResultJobId(null)
         setResultsData(null)
       }
     } catch (err) {
@@ -448,8 +466,8 @@ export function ModelTestingConsole() {
       await fetchJobs()
 
       // If the currently viewed job was deleted, close/clear it.
-      if (viewingResults && jobIds.includes(viewingResults)) {
-        setViewingResults(null)
+      if (selectedResultJobId && jobIds.includes(selectedResultJobId)) {
+        setSelectedResultJobId(null)
         setResultsData(null)
       }
     } catch (err) {
@@ -465,8 +483,8 @@ export function ModelTestingConsole() {
   const archivedCompletedJobs = jobs.filter((j) => {
     if (j.status !== "completed") return false
     if (!j.completed_at) return false
-    const ts = Date.parse(j.completed_at) || Date.parse(j.completed_at.replace(" ", "T"))
-    if (!Number.isFinite(ts)) return false
+    const ts = parseBackendTimestampMs(j.completed_at)
+    if (ts == null) return false
     return nowMs - ts >= 30 * 60 * 1000
   })
   const jobsTabJobs = jobs.filter((j) => !archivedCompletedJobs.some((c) => c.job_id === j.job_id))
@@ -862,28 +880,24 @@ export function ModelTestingConsole() {
                 )}
 
                 {rightTab === "results" && (
-                  <div className="text-white/40 text-sm">
-                    Results dashboard is coming next (this tab will become the visual hub for completed runs).
-                  </div>
+                  <ResultsTab
+                    accentColor={ACCENT_COLOR}
+                    jobs={jobs}
+                    selectedJobId={selectedResultJobId}
+                    results={resultsData}
+                    loadingResults={loadingResults}
+                    onSelectJob={handleViewResults}
+                    onClearSelection={() => {
+                      setSelectedResultJobId(null)
+                      setResultsData(null)
+                    }}
+                  />
                 )}
               </div>
             </div>
           </motion.div>
         </div>
       </div>
-
-      {/* Results viewer modal */}
-      {viewingResults && (
-        <ResultsViewer
-          results={resultsData}
-          loading={loadingResults}
-          onClose={() => {
-            setViewingResults(null)
-            setResultsData(null)
-          }}
-          accentColor={ACCENT_COLOR}
-        />
-      )}
 
       {/* Comparison viewer modal */}
       {showComparison && (
