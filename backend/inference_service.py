@@ -9,6 +9,10 @@ This service handles:
 import os
 import sys
 import uuid
+import traceback
+import contextlib
+import threading
+import signal
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
@@ -21,8 +25,11 @@ import cv2
 import pandas as pd
 from PIL import Image
 
-# Add OCR_scripts to path
-OCR_SCRIPTS_DIR = Path(__file__).parent.parent / "OCR_scripts"
+# Add OCR_scripts to path - check Docker location first, then local
+OCR_SCRIPTS_DIR = Path("/app/OCR_scripts")
+if not OCR_SCRIPTS_DIR.exists():
+    # Local development fallback
+    OCR_SCRIPTS_DIR = Path(__file__).parent.parent / "OCR_scripts"
 sys.path.insert(0, str(OCR_SCRIPTS_DIR))
 
 from config import (
@@ -45,25 +52,150 @@ from pixeltable_schema import (
     get_benchmark_results_table,
     get_job_summaries_table,
     setup_all_tables,
+    table_insert,
+    table_update,
+    table_query,
+    table_delete,
+    retry_on_db_error,
 )
 
 from preprocessing import preprocess_image
 
 
+@contextlib.contextmanager
+def _time_limit(seconds: Optional[float], timeout_message: str):
+    """
+    Best-effort wall-clock timeout.
+
+    - Uses SIGALRM when available (Linux/macOS, main thread only).
+    - Falls back to no-op on platforms/threads where SIGALRM isn't usable.
+    """
+    if seconds is None or seconds <= 0:
+        yield
+        return
+
+    if not hasattr(signal, "SIGALRM"):
+        yield
+        return
+
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    start = time.monotonic()
+    old_handler = signal.getsignal(signal.SIGALRM)
+    old_timer = signal.getitimer(signal.ITIMER_REAL)
+
+    def _handler(signum, frame):
+        raise TimeoutError(timeout_message)
+
+    signal.signal(signal.SIGALRM, _handler)
+    signal.setitimer(signal.ITIMER_REAL, float(seconds))
+    try:
+        yield
+    finally:
+        # Cancel our timer and restore previous handler/timer (supports nesting).
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, old_handler)
+
+        old_remaining, old_interval = old_timer
+        if old_remaining and old_remaining > 0:
+            elapsed = time.monotonic() - start
+            remaining = max(0.0, float(old_remaining) - elapsed)
+            if remaining > 0:
+                signal.setitimer(signal.ITIMER_REAL, remaining, float(old_interval))
+
+
+def _get_rss_mb() -> Optional[float]:
+    """Best-effort RSS (resident set size) in MB, for CloudWatch log debugging."""
+    # Linux containers: prefer /proc/self/status (VmRSS)
+    try:
+        with open("/proc/self/status", "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        kb = float(parts[1])
+                        return kb / 1024.0
+    except Exception:
+        pass
+
+    # Fallback: resource module (platform-dependent units)
+    try:
+        import resource
+        rss = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+        # Linux: KB, macOS: bytes
+        if sys.platform == "darwin":
+            return rss / (1024.0 * 1024.0)
+        return rss / 1024.0
+    except Exception:
+        return None
+
+
 class InferenceService:
     """Service for running OCR inference and storing results in Pixeltable."""
 
-    def __init__(self):
+    def __init__(self, use_gpu: Optional[bool] = None):
         """Initialize the inference service."""
         self.detector: Optional[RoboflowDetector] = None
         self.easyocr_reader = None
         self.paddleocr_engine = None
+        self.use_gpu: bool = False
+
+        # Resolve GPU usage once (can be overridden per-run via run_inference(use_gpu=...))
+        if use_gpu is None:
+            env_default = os.environ.get("DEFAULT_USE_GPU")
+            if env_default is None or env_default == "":
+                requested = True  # prefer GPU if available
+            else:
+                requested = env_default.strip().lower() in ("1", "true", "yes", "y", "on")
+            self.set_use_gpu(requested)
+        else:
+            self.set_use_gpu(bool(use_gpu))
 
         # Ensure tables exist
         try:
             setup_all_tables()
         except Exception as e:
             print(f"Tables may already exist: {e}")
+
+    def _torch_cuda_available(self) -> bool:
+        try:
+            import torch  # EasyOCR depends on torch
+            return bool(torch.cuda.is_available())
+        except Exception:
+            return False
+
+    def _paddle_cuda_available(self) -> bool:
+        try:
+            import paddle
+            # Paddle API differs across versions
+            if hasattr(paddle, "device") and hasattr(paddle.device, "is_compiled_with_cuda"):
+                return bool(paddle.device.is_compiled_with_cuda())
+            if hasattr(paddle, "is_compiled_with_cuda"):
+                return bool(paddle.is_compiled_with_cuda())
+        except Exception:
+            return False
+        return False
+
+    def _resolve_use_gpu(self, requested: bool) -> bool:
+        # Hard override for production safety
+        if os.environ.get("FORCE_CPU", "").strip().lower() in ("1", "true", "yes", "y", "on"):
+            return False
+        if not requested:
+            return False
+
+        # Prefer torch CUDA availability; fall back to paddle's check
+        return self._torch_cuda_available() or self._paddle_cuda_available()
+
+    def set_use_gpu(self, requested: bool) -> None:
+        resolved = self._resolve_use_gpu(requested)
+        if getattr(self, "use_gpu", None) != resolved:
+            self.use_gpu = resolved
+            # Re-init OCR engines with the correct device setting
+            self.easyocr_reader = None
+            self.paddleocr_engine = None
+        print(f"[GPU] requested={requested} resolved={self.use_gpu}")
 
     def _init_detector(self):
         """Lazy initialization of Roboflow detector."""
@@ -76,15 +208,26 @@ class InferenceService:
         if self.easyocr_reader is None:
             import easyocr
             languages = languages or ["en"]
-            self.easyocr_reader = easyocr.Reader(languages, gpu=True)
+            self.easyocr_reader = easyocr.Reader(languages, gpu=self.use_gpu)
         return self.easyocr_reader
 
     def _init_paddleocr(self, lang: str = "en"):
         """Lazy initialization of PaddleOCR (v3.x API)."""
         if self.paddleocr_engine is None:
+            import inspect
             from paddleocr import PaddleOCR
             # PaddleOCR 3.x uses simplified API - removed deprecated params
-            self.paddleocr_engine = PaddleOCR(lang=lang)
+            kwargs = {"lang": lang}
+            try:
+                sig = inspect.signature(PaddleOCR)
+                if "use_gpu" in sig.parameters:
+                    kwargs["use_gpu"] = self.use_gpu
+                if "show_log" in sig.parameters:
+                    kwargs["show_log"] = False
+            except Exception:
+                # If signature introspection fails, fall back to minimal init
+                pass
+            self.paddleocr_engine = PaddleOCR(**kwargs)
         return self.paddleocr_engine
 
     def _run_ocr_on_crop(self, crop: np.ndarray, engine: str, preprocessing: str = "none") -> str:
@@ -116,7 +259,12 @@ class InferenceService:
         elif engine == "paddleocr":
             ocr = self._init_paddleocr()
             # PaddleOCR 3.x uses predict() instead of ocr()
-            results = ocr.predict(processed_crop)
+            try:
+                results = ocr.predict(processed_crop)
+            except Exception as paddle_err:
+                print(f"[PADDLE PREDICT ERROR] {type(paddle_err).__name__}: {paddle_err}")
+                print(f"  Crop shape: {processed_crop.shape if hasattr(processed_crop, 'shape') else 'unknown'}")
+                raise
 
             if not results:
                 return ""
@@ -135,6 +283,7 @@ class InferenceService:
         else:
             raise ValueError(f"Unknown OCR engine: {engine}")
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def create_job(
         self,
         engine: str,
@@ -158,7 +307,7 @@ class InferenceService:
         job_id = str(uuid.uuid4())
 
         jobs_table = get_inference_jobs_table()
-        jobs_table.insert([{
+        table_insert(jobs_table, [{
             "job_id": job_id,
             "engine": engine,
             "preprocessing": preprocessing,
@@ -175,6 +324,7 @@ class InferenceService:
 
         return job_id
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def update_job_status(
         self,
         job_id: str,
@@ -191,7 +341,8 @@ class InferenceService:
         if processed_images is not None:
             updates["processed_images"] = processed_images
 
-        if status == "running":
+        # Only set started_at when transitioning into running (avoid overwriting it on every progress update)
+        if status == "running" and processed_images is None:
             updates["started_at"] = datetime.now()
         elif status in ("completed", "failed"):
             updates["completed_at"] = datetime.now()
@@ -199,9 +350,10 @@ class InferenceService:
         if error_message:
             updates["error_message"] = error_message
 
-        # Update using where clause
-        jobs_table.update(updates, where=(jobs_table.job_id == job_id))
+        # Update using where clause with retry
+        table_update(jobs_table, updates, (jobs_table.job_id == job_id))
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def store_image_result(
         self,
         job_id: str,
@@ -227,7 +379,7 @@ class InferenceService:
         # Serialize OCR results
         ocr_results_json = json.dumps(ocr_results)
 
-        results_table.insert([{
+        table_insert(results_table, [{
             "result_id": str(uuid.uuid4()),
             "job_id": job_id,
             "image_filename": image_filename,
@@ -239,6 +391,7 @@ class InferenceService:
             "timestamp": datetime.now(),
         }])
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def store_benchmark_result(
         self,
         job_id: str,
@@ -258,7 +411,7 @@ class InferenceService:
         cer = character_error_rate(pred_str, gt_str)
         word_acc = word_accuracy(pred_str, gt_str)
 
-        benchmark_table.insert([{
+        table_insert(benchmark_table, [{
             "benchmark_id": str(uuid.uuid4()),
             "job_id": job_id,
             "image_filename": image_filename,
@@ -271,13 +424,14 @@ class InferenceService:
             "word_accuracy": word_acc,
         }])
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def calculate_and_store_summary(self, job_id: str, engine: str, dataset_version: str, dataset_name: str):
         """Calculate aggregate statistics and store job summary."""
         benchmark_table = get_benchmark_results_table()
         summary_table = get_job_summaries_table()
 
-        # Query all benchmark results for this job
-        results = benchmark_table.where(benchmark_table.job_id == job_id).collect()
+        # Query all benchmark results for this job with retry
+        results = table_query(benchmark_table, benchmark_table.job_id == job_id)
 
         if not results or len(results) == 0:
             return
@@ -308,8 +462,8 @@ class InferenceService:
         # Get unique image count
         total_images = df["image_filename"].nunique()
 
-        # Store summary
-        summary_table.insert([{
+        # Store summary with retry
+        table_insert(summary_table, [{
             "summary_id": str(uuid.uuid4()),
             "job_id": job_id,
             "engine": engine,
@@ -330,7 +484,9 @@ class InferenceService:
         ground_truth_csv: Optional[Path] = None,
         progress_callback=None,
         job_id: Optional[str] = None,
-        preprocessing: str = "none"
+        preprocessing: str = "none",
+        use_gpu: Optional[bool] = None,
+        detection_cache: Optional[Dict[str, List[Detection]]] = None,
     ) -> str:
         """
         Run full inference pipeline on a dataset.
@@ -346,6 +502,9 @@ class InferenceService:
         Returns:
             job_id: The ID of the created/used job
         """
+        if use_gpu is not None:
+            self.set_use_gpu(bool(use_gpu))
+
         # Get list of images
         image_files = sorted(
             list(images_dir.glob("*.jpg")) +
@@ -379,29 +538,67 @@ class InferenceService:
             ground_truth = pd.read_csv(ground_truth_csv)
             ground_truth = ground_truth.set_index("Box Label")
 
-        # Initialize detector
-        detector = self._init_detector()
-
         try:
+            # Initialize detector inside try block to catch init errors
+            detector = self._init_detector()
+            rss_every = int(os.environ.get("LOG_RSS_EVERY_N_IMAGES", "1") or "1")
+            if rss_every < 1:
+                rss_every = 1
+            start_rss = _get_rss_mb()
+            if start_rss is not None:
+                print(f"[MEM] rss_mb={start_rss:.1f} at job start")
+
             for idx, image_path in enumerate(image_files):
                 start_time = time.time()
                 image_filename = image_path.name
+                image_timeout_s = float(os.environ.get("MAX_IMAGE_SECONDS", "120"))
+                roboflow_timeout_s = float(os.environ.get("ROBOFLOW_TIMEOUT_SECONDS", "30"))
 
-                # Run detection
-                detections, crops = detector.detect_and_crop(
-                    str(image_path),
-                    confidence_threshold=DETECTION_CONFIDENCE_THRESHOLD
-                )
+                # Per-image error handling - continue on failures instead of crashing
+                try:
+                    # Time-box the entire image pipeline so a single hang can't stall the whole job.
+                    with _time_limit(image_timeout_s, f"timeout: image_pipeline {image_filename}"):
+                        cache_key = str(image_path)
+                        cached_detections = detection_cache.get(cache_key) if detection_cache is not None else None
 
-                # Run OCR on each crop with preprocessing
-                ocr_results = {}
-                for class_name, crop_image in crops.items():
-                    text = self._run_ocr_on_crop(crop_image, engine, preprocessing)
-                    ocr_results[class_name] = text
+                        if cached_detections is not None:
+                            detections = cached_detections
+                            # Crop locally using cached detections (avoids repeated Roboflow API calls)
+                            image = cv2.imread(str(image_path))
+                            if image is None:
+                                raise ValueError(f"Could not load image: {image_path}")
+                            crops = detector.crop_detections(image, detections, padding=5)
+                        else:
+                            # Run detection (also time-box Roboflow network call)
+                            with _time_limit(roboflow_timeout_s, f"timeout: roboflow_detect {image_filename}"):
+                                detections, crops = detector.detect_and_crop(
+                                    str(image_path),
+                                    confidence_threshold=DETECTION_CONFIDENCE_THRESHOLD
+                                )
+                            if detection_cache is not None:
+                                detection_cache[cache_key] = detections
+
+                        # Run OCR on each crop with preprocessing
+                        ocr_results = {}
+                        for class_name, crop_image in crops.items():
+                            try:
+                                text = self._run_ocr_on_crop(crop_image, engine, preprocessing)
+                                ocr_results[class_name] = text
+                            except Exception as ocr_err:
+                                ocr_tb = traceback.format_exc()
+                                print(f"[OCR ERROR] {class_name} in {image_filename}:\n{type(ocr_err).__name__}: {ocr_err}\n{ocr_tb}")
+                                ocr_results[class_name] = ""
+
+                except Exception as img_error:
+                    # Log error with full traceback but continue processing other images
+                    img_tb = traceback.format_exc()
+                    print(f"[IMAGE ERROR] Error processing {image_filename}:\n{type(img_error).__name__}: {img_error}\n{img_tb}")
+                    detections = []
+                    ocr_results = {}
 
                 processing_time = (time.time() - start_time) * 1000
 
-                # Store image result
+                # Store image result (even if empty due to error)
                 self.store_image_result(
                     job_id=job_id,
                     image_filename=image_filename,
@@ -434,6 +631,11 @@ class InferenceService:
                 if progress_callback:
                     progress_callback(job_id, idx + 1, len(image_files), image_filename)
 
+                if ((idx + 1) % rss_every) == 0:
+                    rss = _get_rss_mb()
+                    if rss is not None:
+                        print(f"[MEM] rss_mb={rss:.1f} after {idx + 1}/{len(image_files)} ({image_filename})")
+
             # Calculate and store summary
             self.calculate_and_store_summary(job_id, engine, dataset_version, dataset_name)
 
@@ -441,15 +643,22 @@ class InferenceService:
             self.update_job_status(job_id, "completed", processed_images=len(image_files))
 
         except Exception as e:
-            self.update_job_status(job_id, "failed", error_message=str(e))
+            # Capture full traceback for debugging
+            tb = traceback.format_exc()
+            error_msg = f"{type(e).__name__}: {str(e)}\n\nTraceback:\n{tb}"
+            print(f"[INFERENCE ERROR] Job {job_id} failed:\n{error_msg}")
+
+            # Store truncated version in DB (limit to 2000 chars for DB field)
+            self.update_job_status(job_id, "failed", error_message=error_msg[:2000])
             raise
 
         return job_id
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get current status of a job."""
         jobs_table = get_inference_jobs_table()
-        results = jobs_table.where(jobs_table.job_id == job_id).collect()
+        results = table_query(jobs_table, jobs_table.job_id == job_id)
 
         if not results or len(results) == 0:
             return None
@@ -485,6 +694,7 @@ class InferenceService:
             return [self._convert_numpy_types(item) for item in obj]
         return obj
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def get_job_results(self, job_id: str) -> Dict[str, Any]:
         """Get full results for a completed job."""
         # Get job info
@@ -492,9 +702,9 @@ class InferenceService:
         if not job:
             return {"error": "Job not found"}
 
-        # Get summary
+        # Get summary with retry
         summary_table = get_job_summaries_table()
-        summary_results = summary_table.where(summary_table.job_id == job_id).collect()
+        summary_results = table_query(summary_table, summary_table.job_id == job_id)
 
         summary = None
         if summary_results and len(summary_results) > 0:
@@ -507,9 +717,9 @@ class InferenceService:
                 "per_field_stats": json.loads(summary_row["per_field_stats_json"]) if summary_row["per_field_stats_json"] else {},
             }
 
-        # Get image results
+        # Get image results with retry
         results_table = get_image_results_table()
-        image_results = results_table.where(results_table.job_id == job_id).collect()
+        image_results = table_query(results_table, results_table.job_id == job_id)
 
         images = []
         if image_results and len(image_results) > 0:
@@ -528,9 +738,11 @@ class InferenceService:
             "images": images,
         })
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def list_jobs(self, limit: int = 50) -> List[Dict[str, Any]]:
         """List recent inference jobs."""
         jobs_table = get_inference_jobs_table()
+        # Use direct table query - order_by and limit don't work with our wrapper
         results = jobs_table.order_by(jobs_table.created_at, asc=False).limit(limit).collect()
 
         jobs = []
@@ -551,6 +763,7 @@ class InferenceService:
 
         return jobs
 
+    @retry_on_db_error(max_retries=3, delay=0.5)
     def delete_job(self, job_id: str) -> bool:
         """
         Delete a job and all its related data from Pixeltable.
@@ -568,13 +781,13 @@ class InferenceService:
             benchmark_table = get_benchmark_results_table()
             summary_table = get_job_summaries_table()
 
-            # Delete related records first (foreign key style)
-            results_table.delete(where=(results_table.job_id == job_id))
-            benchmark_table.delete(where=(benchmark_table.job_id == job_id))
-            summary_table.delete(where=(summary_table.job_id == job_id))
+            # Delete related records first (foreign key style) with retry
+            table_delete(results_table, (results_table.job_id == job_id))
+            table_delete(benchmark_table, (benchmark_table.job_id == job_id))
+            table_delete(summary_table, (summary_table.job_id == job_id))
 
             # Delete the job itself
-            jobs_table.delete(where=(jobs_table.job_id == job_id))
+            table_delete(jobs_table, (jobs_table.job_id == job_id))
 
             print(f"Deleted job {job_id} and all related data")
             return True

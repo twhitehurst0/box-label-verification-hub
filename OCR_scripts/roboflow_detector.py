@@ -8,9 +8,11 @@ This module handles:
 """
 import cv2
 import numpy as np
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+from functools import wraps
 
 # Fix for Pillow 10+ compatibility with Roboflow SDK
 # ANTIALIAS was removed in Pillow 10, replaced with LANCZOS
@@ -27,6 +29,36 @@ from config import (
     ROBOFLOW_MODEL_VERSION,
     DETECTION_CONFIDENCE_THRESHOLD,
 )
+
+
+def retry_on_api_error(max_retries: int = 3, delay: float = 1.0):
+    """
+    Retry decorator for Roboflow API calls.
+
+    Retries on transient network/API errors with exponential backoff.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+                    # Retry on network/API errors
+                    if any(err in error_str for err in [
+                        'timeout', 'connection', 'rate', '429', '500', '502', '503', '504',
+                        'timed out', 'network', 'reset by peer', 'broken pipe'
+                    ]):
+                        print(f"Roboflow API error (attempt {attempt + 1}/{max_retries}): {e}")
+                        time.sleep(delay * (attempt + 1))  # Exponential backoff
+                        continue
+                    raise  # Re-raise non-retryable errors
+            raise last_error
+        return wrapper
+    return decorator
 
 
 @dataclass
@@ -95,6 +127,7 @@ class RoboflowDetector:
         self.project = self.rf.workspace(self.workspace).project(self.project_name)
         self.model = self.project.version(self.version).model
 
+    @retry_on_api_error(max_retries=3, delay=1.0)
     def detect(
         self,
         image_path: str,
@@ -152,13 +185,19 @@ class RoboflowDetector:
                     detections.append(detection)
 
             return detections
+
+        except Exception as e:
+            # Log error and re-raise - the retry decorator will handle retries
+            print(f"Error detecting objects in {image_path}: {e}")
+            raise
+
         finally:
             # Clean up temp file if created
             if predict_path != image_path:
                 try:
                     _os.unlink(predict_path)
-                except:
-                    pass
+                except OSError as cleanup_err:
+                    print(f"Warning: Could not clean up temp file {predict_path}: {cleanup_err}")
 
     def crop_detections(
         self,

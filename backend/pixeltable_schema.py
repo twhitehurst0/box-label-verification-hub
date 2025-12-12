@@ -12,14 +12,64 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import json
+import time
+import functools
 
 import pixeltable as pxt
 from pixeltable import Table
 import numpy as np
 import cv2
 
-# Add OCR_scripts to path for imports
-OCR_SCRIPTS_DIR = Path(__file__).parent.parent / "OCR_scripts"
+
+# ============================================================================
+# Retry Decorator for Pixeltable Operations
+# ============================================================================
+
+def retry_on_db_error(max_retries: int = 3, delay: float = 0.5):
+    """
+    Decorator to retry Pixeltable operations on database errors.
+
+    This handles transient PostgreSQL errors like DuplicatePreparedStatement
+    that can occur in containerized environments.
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    error_str = str(e).lower()
+                    # Check if this is a retryable database error
+                    if any(err in error_str for err in [
+                        'duplicatepreparedstatement',
+                        'prepared statement',
+                        'already exists',
+                        'lost synchronization',
+                        'connection',
+                        'psycopg',
+                        'resourceclosed',        # SQLAlchemy ResourceClosedError
+                        'result object',         # "This result object does not return rows"
+                        'closed automatically',  # "has been closed automatically"
+                        'cursor',                # Cursor-related errors
+                        'invalidrequesterror',   # SQLAlchemy invalid request
+                    ]):
+                        last_error = e
+                        print(f"Pixeltable DB error (attempt {attempt + 1}/{max_retries}): {e}")
+                        time.sleep(delay * (attempt + 1))  # Exponential backoff
+                        continue
+                    raise  # Re-raise non-retryable errors
+            # All retries exhausted
+            raise last_error
+        return wrapper
+    return decorator
+
+# Add OCR_scripts to path - check Docker location first, then local
+OCR_SCRIPTS_DIR = Path("/app/OCR_scripts")
+if not OCR_SCRIPTS_DIR.exists():
+    # Local development fallback
+    OCR_SCRIPTS_DIR = Path(__file__).parent.parent / "OCR_scripts"
 sys.path.insert(0, str(OCR_SCRIPTS_DIR))
 
 from config import DETECTION_CLASSES, CLASS_TO_CSV_COLUMN
@@ -38,7 +88,9 @@ def init_pixeltable():
         pxt.create_dir(PIXELTABLE_DIR)
         print(f"Created Pixeltable directory: {PIXELTABLE_DIR}")
     except Exception as e:
-        if "already exists" not in str(e).lower():
+        error_str = str(e).lower()
+        # Handle both error message formats
+        if "already exists" not in error_str and "is an existing" not in error_str:
             raise
         print(f"Pixeltable directory already exists: {PIXELTABLE_DIR}")
 
@@ -61,13 +113,18 @@ def create_inference_jobs_table() -> Table:
     - completed_at: Job completion timestamp
     - error_message: Error details if failed
     """
+    # Ensure directory exists first
+    init_pixeltable()
+
     table_path = f"{PIXELTABLE_DIR}.inference_jobs"
 
+    # Check if table already exists - DO NOT drop existing tables!
     try:
-        # Drop existing table if recreating
-        pxt.drop_table(table_path, if_not_exists="ignore", force=True)
-    except:
-        pass
+        existing_table = pxt.get_table(table_path)
+        print(f"Table already exists: {table_path}")
+        return existing_table
+    except Exception:
+        pass  # Table doesn't exist, create it
 
     t = pxt.create_table(
         table_path,
@@ -108,10 +165,13 @@ def create_image_results_table() -> Table:
     """
     table_path = f"{PIXELTABLE_DIR}.image_results"
 
+    # Check if table already exists - DO NOT drop existing tables!
     try:
-        pxt.drop_table(table_path, if_not_exists="ignore", force=True)
-    except:
-        pass
+        existing_table = pxt.get_table(table_path)
+        print(f"Table already exists: {table_path}")
+        return existing_table
+    except Exception:
+        pass  # Table doesn't exist, create it
 
     t = pxt.create_table(
         table_path,
@@ -151,10 +211,13 @@ def create_benchmark_results_table() -> Table:
     """
     table_path = f"{PIXELTABLE_DIR}.benchmark_results"
 
+    # Check if table already exists - DO NOT drop existing tables!
     try:
-        pxt.drop_table(table_path, if_not_exists="ignore", force=True)
-    except:
-        pass
+        existing_table = pxt.get_table(table_path)
+        print(f"Table already exists: {table_path}")
+        return existing_table
+    except Exception:
+        pass  # Table doesn't exist, create it
 
     t = pxt.create_table(
         table_path,
@@ -194,10 +257,13 @@ def create_job_summary_table() -> Table:
     """
     table_path = f"{PIXELTABLE_DIR}.job_summaries"
 
+    # Check if table already exists - DO NOT drop existing tables!
     try:
-        pxt.drop_table(table_path, if_not_exists="ignore", force=True)
-    except:
-        pass
+        existing_table = pxt.get_table(table_path)
+        print(f"Table already exists: {table_path}")
+        return existing_table
+    except Exception:
+        pass  # Table doesn't exist, create it
 
     t = pxt.create_table(
         table_path,
@@ -225,6 +291,44 @@ def create_job_summary_table() -> Table:
 # User-Defined Functions (UDFs) for OCR
 # ============================================================================
 
+def _resolve_use_gpu_default() -> bool:
+    """
+    Resolve whether to use GPU based on env + availability.
+
+    - DEFAULT_USE_GPU: if set, controls the requested default (true/false)
+    - FORCE_CPU: if true, always disables GPU
+    """
+    force_cpu = os.environ.get("FORCE_CPU", "").strip().lower() in ("1", "true", "yes", "y", "on")
+    if force_cpu:
+        return False
+
+    env_default = os.environ.get("DEFAULT_USE_GPU")
+    if env_default is None or env_default == "":
+        requested = True  # prefer GPU if available
+    else:
+        requested = env_default.strip().lower() in ("1", "true", "yes", "y", "on")
+    if not requested:
+        return False
+
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return True
+    except Exception:
+        pass
+
+    try:
+        import paddle
+        if hasattr(paddle, "device") and hasattr(paddle.device, "is_compiled_with_cuda"):
+            return bool(paddle.device.is_compiled_with_cuda())
+        if hasattr(paddle, "is_compiled_with_cuda"):
+            return bool(paddle.is_compiled_with_cuda())
+    except Exception:
+        pass
+
+    return False
+
+
 @pxt.udf
 def run_easyocr(image_crop: pxt.Image, languages: str = "en") -> str:
     """
@@ -241,7 +345,7 @@ def run_easyocr(image_crop: pxt.Image, languages: str = "en") -> str:
 
     # Initialize reader (cached by EasyOCR)
     lang_list = [l.strip() for l in languages.split(",")]
-    reader = easyocr.Reader(lang_list, gpu=True)
+    reader = easyocr.Reader(lang_list, gpu=_resolve_use_gpu_default())
 
     # Convert Pixeltable image to numpy array
     img_array = np.array(image_crop)
@@ -273,21 +377,41 @@ def run_paddleocr(image_crop: pxt.Image, lang: str = "en") -> str:
         Extracted text as string
     """
     from paddleocr import PaddleOCR
+    import inspect
 
-    # Initialize PaddleOCR
-    ocr = PaddleOCR(lang=lang, use_angle_cls=True, use_gpu=True, show_log=False)
+    # Initialize PaddleOCR (support both v2 and v3 signatures)
+    use_gpu = _resolve_use_gpu_default()
+    kwargs = {"lang": lang}
+    try:
+        sig = inspect.signature(PaddleOCR)
+        if "use_gpu" in sig.parameters:
+            kwargs["use_gpu"] = use_gpu
+        if "show_log" in sig.parameters:
+            kwargs["show_log"] = False
+        if "use_angle_cls" in sig.parameters:
+            kwargs["use_angle_cls"] = True
+    except Exception:
+        pass
+    ocr = PaddleOCR(**kwargs)
 
     # Convert Pixeltable image to numpy array
     img_array = np.array(image_crop)
 
-    # Run OCR
-    results = ocr.ocr(img_array, cls=True)
+    # Run OCR (PaddleOCR v3: predict(); v2: ocr())
+    if hasattr(ocr, "predict"):
+        results = ocr.predict(img_array)
+        if not results:
+            return ""
+        result = results[0] if results else {}
+        rec_texts = result.get("rec_texts", [])
+        rec_scores = result.get("rec_scores", [])
+        texts = [t for t, s in zip(rec_texts, rec_scores) if s is not None and float(s) >= 0.3]
+        return " ".join(texts)
 
-    # Handle empty results
+    results = ocr.ocr(img_array, cls=True)
     if not results or results[0] is None:
         return ""
 
-    # Extract text with confidence > 0.3
     texts = []
     for line in results[0]:
         if line is None:
@@ -295,7 +419,6 @@ def run_paddleocr(image_crop: pxt.Image, lang: str = "en") -> str:
         bbox, (text, confidence) = line
         if confidence >= 0.3:
             texts.append(text)
-
     return " ".join(texts)
 
 
@@ -371,8 +494,9 @@ def check_normalized_match(prediction: str, ground_truth: str) -> bool:
 # Helper Functions
 # ============================================================================
 
+@retry_on_db_error(max_retries=3, delay=0.5)
 def get_table(table_name: str) -> Table:
-    """Get a Pixeltable table by name."""
+    """Get a Pixeltable table by name with retry logic."""
     return pxt.get_table(f"{PIXELTABLE_DIR}.{table_name}")
 
 
@@ -390,6 +514,33 @@ def get_benchmark_results_table() -> Table:
 
 def get_job_summaries_table() -> Table:
     return get_table("job_summaries")
+
+
+# Retry-enabled wrappers for table operations
+@retry_on_db_error(max_retries=3, delay=0.5)
+def table_insert(table: Table, rows: list):
+    """Insert rows with retry logic."""
+    return table.insert(rows)
+
+
+@retry_on_db_error(max_retries=3, delay=0.5)
+def table_update(table: Table, updates: dict, where_clause):
+    """Update rows with retry logic."""
+    return table.update(updates, where=where_clause)
+
+
+@retry_on_db_error(max_retries=3, delay=0.5)
+def table_query(table: Table, where_clause=None):
+    """Query table with retry logic."""
+    if where_clause is not None:
+        return table.where(where_clause).collect()
+    return table.collect()
+
+
+@retry_on_db_error(max_retries=3, delay=0.5)
+def table_delete(table: Table, where_clause):
+    """Delete from table with retry logic."""
+    return table.delete(where=where_clause)
 
 
 def setup_all_tables():

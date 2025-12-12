@@ -453,7 +453,7 @@ export function ModelTestingConsole() {
       />
 
       {/* Content */}
-      <div className="relative z-10 mx-auto max-w-6xl px-6 py-8">
+      <div className="relative z-10 mx-auto w-full max-w-none px-6 py-8">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -570,13 +570,13 @@ export function ModelTestingConsole() {
         </motion.div>
 
         {/* Main grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Configuration panel */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1 }}
-            className="lg:col-span-1 space-y-6"
+            className="lg:col-span-4 space-y-6"
           >
             {/* Panel wrapper */}
             <div
@@ -677,7 +677,7 @@ export function ModelTestingConsole() {
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.2 }}
-            className="lg:col-span-2"
+            className="lg:col-span-8"
           >
             <div
               className="relative rounded-2xl overflow-hidden h-full"

@@ -165,6 +165,22 @@ ROBOFLOW_API_KEY=xxx
 ROBOFLOW_WORKSPACE=your-workspace-url
 ```
 
+## Backend (FastAPI) deployment notes (AWS App Runner)
+
+The OCR inference backend runs long-lived background processes. For reliability on App Runner:
+
+- **Instance sizing**: start with **2 vCPU / 4GB+** (OCR + Pixeltable + Roboflow can spike memory).
+- **Concurrency**: set App Runner request concurrency low (and keep `MAX_CONCURRENT_JOBS=1`) to avoid multiple inference workers on one small instance.
+- **Scaling**: set **min instances = 1** while running background jobs (scale-to-zero can terminate in-flight jobs).
+
+Useful backend env vars:
+
+- **MAX_CONCURRENT_JOBS**: per-instance cap on concurrent inference workers (default `1`).
+- **MAX_IMAGE_SECONDS**: max wall time per image to prevent hangs (default `120`).
+- **ROBOFLOW_TIMEOUT_SECONDS**: max wall time for the Roboflow detect step (default `30`).
+- **DEFAULT_USE_GPU**: if set, controls the default GPU request (`true`/`false`). The backend will still auto-disable GPU if CUDA isn’t available.
+- **FORCE_CPU**: if `true`, disables GPU usage even if CUDA is available.
+
 ## License
 
 Private - All rights reserved.
