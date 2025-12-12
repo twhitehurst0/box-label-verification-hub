@@ -67,6 +67,17 @@ export function ModelTestingConsole() {
     setMounted(true)
   }, [])
 
+  const getApiErrorMessage = (data: any, status: number) => {
+    const detail = data?.detail
+    if (typeof detail === "string") return detail
+    if (detail && typeof detail === "object") {
+      if (typeof detail.message === "string") return detail.message
+      if (typeof detail.error === "string" && typeof detail.message === "string") return `${detail.error}: ${detail.message}`
+    }
+    if (typeof data?.message === "string") return data.message
+    return `Request failed (HTTP ${status})`
+  }
+
   // SmolVLM2 is end-to-end (no preprocessing); keep selection sane.
   useEffect(() => {
     if (selectedEngine === "smolvlm2") {
@@ -192,17 +203,23 @@ export function ModelTestingConsole() {
         }),
       })
 
-      const data: StartInferenceResponse = await res.json()
+      const data: any = await res.json().catch(() => null)
+      if (!res.ok) {
+        setError(getApiErrorMessage(data, res.status))
+        setRunningInference(false)
+        return
+      }
+      const typed: StartInferenceResponse = data
 
-      if (data.success && data.job_id) {
-        setCurrentJobId(data.job_id)
+      if (typed.success && typed.job_id) {
+        setCurrentJobId(typed.job_id)
         fetchJobs()
       } else {
-        setError(data.message || "Failed to start inference")
+        setError(typed.message || "Failed to start inference")
         setRunningInference(false)
       }
     } catch (err) {
-      setError("Failed to start inference. Check if backend is running.")
+      setError(`Failed to start inference: ${err instanceof Error ? err.message : "Unknown error"}`)
       setRunningInference(false)
     }
   }
@@ -237,13 +254,20 @@ export function ModelTestingConsole() {
         }),
       })
 
-      const data: StartBatchInferenceResponse = await res.json()
+      const data: any = await res.json().catch(() => null)
+      if (!res.ok) {
+        setError(getApiErrorMessage(data, res.status))
+        setRunningBatch(false)
+        setShowComparison(false)
+        return
+      }
+      const typed: StartBatchInferenceResponse = data
 
-      if (data.success && data.job_ids) {
+      if (typed.success && typed.job_ids) {
         // Update comparisons with job IDs
         const updatedComparisons = selectedPreprocessing.map((p, i) => ({
           preprocessing: p,
-          job_id: data.job_ids[i],
+          job_id: typed.job_ids[i],
           summary: null,
           status: "running" as const,
         }))
@@ -251,14 +275,14 @@ export function ModelTestingConsole() {
         fetchJobs()
 
         // Start polling for batch results
-        pollBatchResults(data.job_ids, updatedComparisons)
+        pollBatchResults(typed.job_ids, updatedComparisons)
       } else {
-        setError(data.message || "Failed to start batch inference")
+        setError(typed.message || "Failed to start batch inference")
         setRunningBatch(false)
         setShowComparison(false)
       }
     } catch (err) {
-      setError("Failed to start batch inference. Check if backend is running.")
+      setError(`Failed to start batch inference: ${err instanceof Error ? err.message : "Unknown error"}`)
       setRunningBatch(false)
       setShowComparison(false)
     }
@@ -409,7 +433,9 @@ export function ModelTestingConsole() {
     }
   }
 
-  const canRunInference = selectedEngine && selectedDataset && !runningInference && !runningBatch && apiStatus === "online"
+  const hasActiveJobs = jobs.some((j) => j.status === "running" || j.status === "pending")
+  const canRunInference =
+    selectedEngine && selectedDataset && !runningInference && !runningBatch && apiStatus === "online" && !hasActiveJobs
   const supportsPreprocessing = selectedEngine !== "smolvlm2"
   const canRunBatch = supportsPreprocessing && canRunInference && selectedPreprocessing.length >= 2
   const showBatchButton = supportsPreprocessing && selectedPreprocessing.length >= 2
@@ -681,6 +707,12 @@ export function ModelTestingConsole() {
                     progress={progress}
                     accentColor={ACCENT_COLOR}
                   />
+                )}
+
+                {hasActiveJobs && (
+                  <div className="mt-3 text-[10px] font-mono text-white/40 leading-relaxed">
+                    A job is already running on the backend. Wait for it to finish, or delete it from the jobs table to free capacity.
+                  </div>
                 )}
               </div>
             </div>
