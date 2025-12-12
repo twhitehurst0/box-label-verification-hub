@@ -60,6 +60,7 @@ from pixeltable_schema import (
 )
 
 from preprocessing import preprocess_image
+from smolvlm2_engine import SmolVLM2Engine
 
 
 @contextlib.contextmanager
@@ -140,6 +141,7 @@ class InferenceService:
         self.detector: Optional[RoboflowDetector] = None
         self.easyocr_reader = None
         self.paddleocr_engine = None
+        self.smolvlm2_engine: Optional[SmolVLM2Engine] = None
         self.use_gpu: bool = False
 
         # Resolve GPU usage once (can be overridden per-run via run_inference(use_gpu=...))
@@ -202,6 +204,12 @@ class InferenceService:
         if self.detector is None:
             self.detector = RoboflowDetector()
         return self.detector
+
+    def _init_smolvlm2(self) -> SmolVLM2Engine:
+        """Lazy initialization of SmolVLM2 engine (Roboflow serverless VLM)."""
+        if self.smolvlm2_engine is None:
+            self.smolvlm2_engine = SmolVLM2Engine()
+        return self.smolvlm2_engine
 
     def _init_easyocr(self, languages: List[str] = None):
         """Lazy initialization of EasyOCR."""
@@ -539,14 +547,77 @@ class InferenceService:
             ground_truth = ground_truth.set_index("Box Label")
 
         try:
-            # Initialize detector inside try block to catch init errors
-            detector = self._init_detector()
             rss_every = int(os.environ.get("LOG_RSS_EVERY_N_IMAGES", "1") or "1")
             if rss_every < 1:
                 rss_every = 1
             start_rss = _get_rss_mb()
             if start_rss is not None:
                 print(f"[MEM] rss_mb={start_rss:.1f} at job start")
+
+            # SmolVLM2: end-to-end VLM over full image (no detection/cropping, preprocessing ignored)
+            if engine == "smolvlm2":
+                vlm = self._init_smolvlm2()
+                vlm_timeout_s = float(os.environ.get("SMOLVLM_TIMEOUT_SECONDS", "90"))
+
+                for idx, image_path in enumerate(image_files):
+                    start_time = time.time()
+                    image_filename = image_path.name
+                    image_timeout_s = float(os.environ.get("MAX_IMAGE_SECONDS", "240"))
+
+                    try:
+                        with _time_limit(image_timeout_s, f"timeout: smolvlm2_image {image_filename}"):
+                            with _time_limit(vlm_timeout_s, f"timeout: smolvlm2_infer {image_filename}"):
+                                predictions = vlm.extract_all_fields(str(image_path))
+                    except Exception as img_error:
+                        img_tb = traceback.format_exc()
+                        print(
+                            f"[SMOLVLM2 IMAGE ERROR] {image_filename}:\n"
+                            f"{type(img_error).__name__}: {img_error}\n{img_tb}"
+                        )
+                        predictions = {field: "" for field in DETECTION_CLASSES}
+
+                    processing_time = (time.time() - start_time) * 1000
+
+                    # Store image result (detections are empty for end-to-end VLM)
+                    self.store_image_result(
+                        job_id=job_id,
+                        image_filename=image_filename,
+                        image_path=str(image_path),
+                        detections=[],
+                        ocr_results=predictions,
+                        processing_time_ms=processing_time,
+                    )
+
+                    # Store benchmark results if ground truth available
+                    if ground_truth is not None and image_filename in ground_truth.index:
+                        gt_row = ground_truth.loc[image_filename]
+                        for class_name in DETECTION_CLASSES:
+                            csv_column = CLASS_TO_CSV_COLUMN.get(class_name, class_name)
+                            gt_value = gt_row.get(csv_column, "")
+                            pred_value = predictions.get(class_name, "")
+                            self.store_benchmark_result(
+                                job_id=job_id,
+                                image_filename=image_filename,
+                                field_name=class_name,
+                                ground_truth=gt_value,
+                                prediction=pred_value,
+                            )
+
+                    self.update_job_status(job_id, "running", processed_images=idx + 1)
+                    if progress_callback:
+                        progress_callback(job_id, idx + 1, len(image_files), image_filename)
+
+                    if ((idx + 1) % rss_every) == 0:
+                        rss = _get_rss_mb()
+                        if rss is not None:
+                            print(f"[MEM] rss_mb={rss:.1f} after {idx + 1}/{len(image_files)} ({image_filename})")
+
+                self.calculate_and_store_summary(job_id, engine, dataset_version, dataset_name)
+                self.update_job_status(job_id, "completed", processed_images=len(image_files))
+                return job_id
+
+            # Default: detection + crop + OCR (EasyOCR/PaddleOCR)
+            detector = self._init_detector()
 
             for idx, image_path in enumerate(image_files):
                 start_time = time.time()

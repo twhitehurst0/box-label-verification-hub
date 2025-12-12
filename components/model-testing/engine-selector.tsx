@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import type { OCREngine, OCREngineOption } from "@/types/model-testing"
 
@@ -25,7 +24,7 @@ export function EngineSelector({
         OCR Engine
       </label>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {engines.map((engine, index) => {
           const isSelected = selectedEngine === engine.id
 

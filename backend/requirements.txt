@@ -14,6 +14,9 @@ paddlepaddle>=2.5.0
 # Roboflow for detection
 roboflow>=1.1.0
 
+# Roboflow Serverless inference (SmolVLM2)
+inference-sdk>=0.20.0
+
 # Image processing
 opencv-python>=4.8.0
 pillow>=10.0.0

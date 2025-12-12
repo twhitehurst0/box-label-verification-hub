@@ -205,7 +205,7 @@ def _register_and_watch_job(job_id: str, process: multiprocessing.Process) -> No
 
 class StartInferenceRequest(BaseModel):
     """Request body for starting an inference job."""
-    engine: str = Field(..., description="OCR engine: 'easyocr' or 'paddleocr'")
+    engine: str = Field(..., description="OCR engine: 'easyocr', 'paddleocr', or 'smolvlm2'")
     dataset_version: str = Field(..., description="Dataset version (e.g., 'version-1')")
     dataset_name: str = Field(default="default", description="Dataset name")
     preprocessing: str = Field(default="none", description="Preprocessing type to apply")
@@ -214,7 +214,7 @@ class StartInferenceRequest(BaseModel):
 
 class StartBatchInferenceRequest(BaseModel):
     """Request body for starting batch inference with multiple preprocessing options."""
-    engine: str = Field(..., description="OCR engine: 'easyocr' or 'paddleocr'")
+    engine: str = Field(..., description="OCR engine: 'easyocr' or 'paddleocr' (batch preprocessing)")
     dataset_version: str = Field(..., description="Dataset version (e.g., 'version-1')")
     dataset_name: str = Field(default="default", description="Dataset name")
     preprocessing_options: List[str] = Field(default=["none"], description="List of preprocessing types to run")
@@ -649,10 +649,10 @@ async def get_datasets():
 async def start_inference(request: StartInferenceRequest):
     """Start a new inference job."""
     # Validate engine
-    if request.engine not in ("easyocr", "paddleocr"):
+    if request.engine not in ("easyocr", "paddleocr", "smolvlm2"):
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid engine: {request.engine}. Must be 'easyocr' or 'paddleocr'"
+            detail=f"Invalid engine: {request.engine}. Must be 'easyocr', 'paddleocr', or 'smolvlm2'"
         )
 
     # Per-instance concurrency guardrail (prevents OOM/SIGKILL churn on small App Runner instances)
@@ -850,6 +850,11 @@ async def start_batch_inference(request: StartBatchInferenceRequest):
     to avoid Pixeltable concurrency conflicts.
     """
     # Validate engine
+    if request.engine == "smolvlm2":
+        raise HTTPException(
+            status_code=400,
+            detail="SmolVLM2 is an end-to-end model and does not support preprocessing batch runs. Use /inference/start instead."
+        )
     if request.engine not in ("easyocr", "paddleocr"):
         raise HTTPException(
             status_code=400,
@@ -1096,6 +1101,13 @@ async def list_ocr_engines():
             "name": "PaddleOCR",
             "description": "High-performance OCR with angle classification support",
             "supports_gpu": True,
+            "languages": ["en"],
+        },
+        {
+            "id": "smolvlm2",
+            "name": "SmolVLM2 (VLM)",
+            "description": "End-to-end VLM extraction (Roboflow Serverless) - no preprocessing needed",
+            "supports_gpu": False,
             "languages": ["en"],
         },
     ]

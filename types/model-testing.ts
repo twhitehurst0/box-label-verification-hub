@@ -1,5 +1,5 @@
 // OCR Engine Types
-export type OCREngine = "easyocr" | "paddleocr"
+export type OCREngine = "easyocr" | "paddleocr" | "smolvlm2"
 
 export interface OCREngineOption {
   id: OCREngine
@@ -117,6 +117,12 @@ export const OCR_ENGINES: OCREngineOption[] = [
     name: "PaddleOCR",
     description: "High-performance with angle detection",
     icon: "🎯",
+  },
+  {
+    id: "smolvlm2",
+    name: "SmolVLM2 (VLM)",
+    description: "End-to-end extraction (no preprocessing needed)",
+    icon: "🧠",
   },
 ]
 

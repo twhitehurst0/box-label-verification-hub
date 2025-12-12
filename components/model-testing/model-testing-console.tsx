@@ -67,6 +67,13 @@ export function ModelTestingConsole() {
     setMounted(true)
   }, [])
 
+  // SmolVLM2 is end-to-end (no preprocessing); keep selection sane.
+  useEffect(() => {
+    if (selectedEngine === "smolvlm2") {
+      setSelectedPreprocessing(["none"])
+    }
+  }, [selectedEngine])
+
   // Check API health
   useEffect(() => {
     async function checkHealth() {
@@ -162,7 +169,12 @@ export function ModelTestingConsole() {
   // Start inference (single preprocessing option)
   const handleStartInference = async () => {
     if (!selectedEngine || !selectedDataset) return
-    const preprocessing = selectedPreprocessing.length > 0 ? selectedPreprocessing[0] : "none"
+    const preprocessing =
+      selectedEngine === "smolvlm2"
+        ? "none"
+        : selectedPreprocessing.length > 0
+          ? selectedPreprocessing[0]
+          : "none"
 
     try {
       setRunningInference(true)
@@ -198,6 +210,7 @@ export function ModelTestingConsole() {
   // Start batch inference (multiple preprocessing options)
   const handleStartBatchInference = async () => {
     if (!selectedEngine || !selectedDataset || selectedPreprocessing.length < 2) return
+    if (selectedEngine === "smolvlm2") return
 
     try {
       setRunningBatch(true)
@@ -397,8 +410,9 @@ export function ModelTestingConsole() {
   }
 
   const canRunInference = selectedEngine && selectedDataset && !runningInference && !runningBatch && apiStatus === "online"
-  const canRunBatch = canRunInference && selectedPreprocessing.length >= 2
-  const showBatchButton = selectedPreprocessing.length >= 2
+  const supportsPreprocessing = selectedEngine !== "smolvlm2"
+  const canRunBatch = supportsPreprocessing && canRunInference && selectedPreprocessing.length >= 2
+  const showBatchButton = supportsPreprocessing && selectedPreprocessing.length >= 2
 
   if (!mounted) {
     return <div className="h-full w-full bg-black" />
@@ -646,7 +660,7 @@ export function ModelTestingConsole() {
                 <PreprocessingSelector
                   selectedOptions={selectedPreprocessing}
                   onSelect={setSelectedPreprocessing}
-                  disabled={runningInference || runningBatch || apiStatus !== "online"}
+                  disabled={runningInference || runningBatch || apiStatus !== "online" || !supportsPreprocessing}
                   accentColor={ACCENT_COLOR}
                 />
 
