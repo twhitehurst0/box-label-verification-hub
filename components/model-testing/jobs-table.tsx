@@ -54,6 +54,22 @@ export function JobsTable({
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc")
   const scrollContainerRef = useRef<HTMLDivElement>(null)
 
+  const parseBackendTimestampMs = (dateStr: string | null | undefined): number | null => {
+    if (!dateStr) return null
+    let s = dateStr.trim()
+    if (!s) return null
+    if (s.includes(" ") && !s.includes("T")) s = s.replace(" ", "T")
+    const m = s.match(/^(.+T\\d\\d:\\d\\d:\\d\\d)(\\.(\\d+))?$/)
+    if (m) {
+      const base = m[1]
+      const frac = m[3] || ""
+      const ms = frac ? `.${frac.slice(0, 3).padEnd(3, "0")}` : ""
+      s = `${base}${ms}Z`
+    }
+    const t = Date.parse(s)
+    return Number.isFinite(t) ? t : null
+  }
+
   // Sort jobs based on current sort settings
   const sortedJobs = [...jobs].sort((a, b) => {
     let comparison = 0
@@ -61,8 +77,8 @@ export function JobsTable({
     if (sortField === "status") {
       comparison = statusOrder[a.status] - statusOrder[b.status]
     } else if (sortField === "date") {
-      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0
-      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0
+      const dateA = parseBackendTimestampMs(a.created_at) ?? 0
+      const dateB = parseBackendTimestampMs(b.created_at) ?? 0
       comparison = dateA - dateB
     }
 
@@ -134,7 +150,9 @@ export function JobsTable({
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "—"
-    const date = new Date(dateStr)
+    const ms = parseBackendTimestampMs(dateStr)
+    if (!ms) return "—"
+    const date = new Date(ms)
     return date.toLocaleString("en-US", {
       month: "short",
       day: "numeric",
