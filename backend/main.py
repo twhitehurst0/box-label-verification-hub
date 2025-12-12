@@ -54,6 +54,52 @@ _JOB_PROCESSES: Dict[str, multiprocessing.Process] = {}
 _JOB_WATCH_TASKS: Dict[str, "asyncio.Task[None]"] = {}
 _WATCHER_DB_LOCK = asyncio.Lock()
 
+async def _terminate_process(process: multiprocessing.Process, reason: str, timeout_s: float = 5.0) -> bool:
+    """Best-effort terminate a worker process so new jobs can start."""
+    try:
+        if process is None or process.pid is None:
+            return True
+        if not process.is_alive():
+            return True
+
+        print(f"[CANCEL] Terminating worker pid={process.pid} reason={reason}")
+        try:
+            process.terminate()
+        except Exception as e:
+            print(f"[CANCEL] Failed to terminate pid={process.pid}: {type(e).__name__}: {e}")
+
+        await asyncio.to_thread(process.join, timeout_s)
+        if process.is_alive():
+            print(f"[CANCEL] Worker still alive after SIGTERM pid={process.pid}; sending SIGKILL")
+            try:
+                # Python 3.10+: Process.kill() exists
+                process.kill()
+            except Exception as e:
+                print(f"[CANCEL] Failed to kill pid={process.pid}: {type(e).__name__}: {e}")
+            await asyncio.to_thread(process.join, timeout_s)
+
+        return not process.is_alive()
+    except Exception as e:
+        print(f"[CANCEL] Unexpected error terminating worker: {type(e).__name__}: {e}")
+        return False
+
+
+async def _terminate_workers_for_job_ids(job_ids: List[str], reason: str) -> None:
+    """Terminate any active worker processes associated with the provided job IDs."""
+    procs_by_pid: Dict[int, multiprocessing.Process] = {}
+    for jid in job_ids:
+        try:
+            proc = _JOB_PROCESSES.get(jid)
+            if proc is None or proc.pid is None:
+                continue
+            if proc.is_alive():
+                procs_by_pid[int(proc.pid)] = proc
+        except Exception:
+            continue
+
+    for pid, proc in procs_by_pid.items():
+        await _terminate_process(proc, reason=f"{reason} pid={pid}")
+
 def _get_active_worker_pids() -> Dict[int, multiprocessing.Process]:
     """Return unique alive worker processes keyed by PID (dedupes batch jobs)."""
     active: Dict[int, multiprocessing.Process] = {}
@@ -956,6 +1002,10 @@ async def delete_job(job_id: str):
     if not status:
         raise HTTPException(status_code=404, detail="Job not found")
 
+    # If this job is associated with an active worker, terminate it first.
+    # This prevents the per-instance concurrency guard from blocking new jobs after deletion.
+    await _terminate_workers_for_job_ids([job_id], reason="delete_job")
+
     # If running, mark as cancelled first
     if status["status"] == "running":
         service.update_job_status(job_id, "cancelled")
@@ -991,6 +1041,9 @@ async def batch_delete_jobs(request: BatchDeleteRequest):
     deleted_count = 0
     failed_count = 0
     failed_jobs = []
+
+    # Terminate any active workers for these jobs up-front (batch runs share one worker pid).
+    await _terminate_workers_for_job_ids(request.job_ids, reason="batch_delete_jobs")
 
     for job_id in request.job_ids:
         try:
