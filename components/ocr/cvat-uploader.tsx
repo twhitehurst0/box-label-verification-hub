@@ -342,7 +342,7 @@ function GlassCard({
     <div className="relative rounded-2xl">
       {/* Glass background */}
       <div
-        className="absolute inset-0 rounded-2xl overflow-hidden"
+        className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none"
         style={{
           background: `linear-gradient(135deg, rgba(255,255,255,0.08) 0%, rgba(255,255,255,0.03) 50%, rgba(255,255,255,0.06) 100%)`,
           backdropFilter: "blur(24px) saturate(180%)",
@@ -368,7 +368,7 @@ function GlassCard({
       />
 
       {/* Content */}
-      <div className="relative z-10 p-6">
+      <div className="relative p-6">
         <h2
           className="text-xs font-semibold uppercase tracking-widest mb-4"
           style={{ color: accentColor }}
