@@ -40,9 +40,9 @@ export function JobsTable({
   type SortOrder = "asc" | "desc"
 
   const statusOrder: Record<JobStatus, number> = {
-    running: 0,
-    pending: 1,
-    completed: 2,
+    completed: 0,
+    running: 1,
+    pending: 2,
     failed: 3,
     cancelled: 4,
   }
