@@ -1040,32 +1040,46 @@ async def start_batch_inference(request: StartBatchInferenceRequest):
     service = get_inference_service()
     job_ids = []
 
-    # Create all jobs first (in pending state).
-    # If creation fails mid-way, best-effort delete any already-created jobs to avoid orphan rows.
-    try:
-        for preprocessing in request.preprocessing_options:
-            job_id = service.create_job(
-                engine=request.engine,
-                dataset_version=request.dataset_version,
-                dataset_name=request.dataset_name,
-                total_images=dataset.image_count,
-                preprocessing=preprocessing,
-            )
-            job_ids.append(job_id)
-            print(f"Created batch job {job_id} with preprocessing: {preprocessing}")
-    except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
-        # Roll back any partially-created jobs
-        for jid in job_ids:
+    # Create jobs SEQUENTIALLY with delays to avoid Pixeltable write contention.
+    # Each job creation gets its own retry loop; on total failure we roll back.
+    JOB_CREATE_DELAY_S = 0.5  # 500ms between creations
+    JOB_CREATE_MAX_RETRIES = 3
+    import time as _time
+
+    for preprocessing in request.preprocessing_options:
+        last_err = None
+        for attempt in range(1, JOB_CREATE_MAX_RETRIES + 1):
             try:
-                service.delete_job(jid)
-            except Exception:
-                pass
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to create batch jobs: {type(e).__name__}: {str(e)}\n{tb[:1000]}",
-        )
+                job_id = service.create_job(
+                    engine=request.engine,
+                    dataset_version=request.dataset_version,
+                    dataset_name=request.dataset_name,
+                    total_images=dataset.image_count,
+                    preprocessing=preprocessing,
+                )
+                job_ids.append(job_id)
+                print(f"Created batch job {job_id} with preprocessing: {preprocessing}")
+                last_err = None
+                break  # success
+            except Exception as e:
+                last_err = e
+                print(f"[BATCH] Job creation attempt {attempt}/{JOB_CREATE_MAX_RETRIES} failed for {preprocessing}: {e}")
+                _time.sleep(0.3 * attempt)  # back-off
+        if last_err is not None:
+            import traceback
+            tb = traceback.format_exc()
+            # Roll back any partially-created jobs
+            for jid in job_ids:
+                try:
+                    service.delete_job(jid)
+                except Exception:
+                    pass
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create batch jobs at {preprocessing}: {type(last_err).__name__}: {str(last_err)}\n{tb[:800]}",
+            )
+        # Delay before next creation to let Pixeltable settle
+        await asyncio.sleep(JOB_CREATE_DELAY_S)
 
     # Enqueue a single batch item; the dispatcher will start the sequential batch worker when capacity is available.
     queue_position = _JOB_QUEUE.qsize() + 1
