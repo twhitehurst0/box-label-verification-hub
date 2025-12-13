@@ -96,13 +96,6 @@ export function ModelTestingConsole() {
     return Number.isFinite(t) ? t : null
   }
 
-  // SmolVLM2 is end-to-end (no preprocessing); keep selection sane.
-  useEffect(() => {
-    if (selectedEngine === "smolvlm2") {
-      setSelectedPreprocessing(["none"])
-    }
-  }, [selectedEngine])
-
   // Check API health
   useEffect(() => {
     async function checkHealth() {
@@ -198,12 +191,7 @@ export function ModelTestingConsole() {
   // Start inference (single preprocessing option)
   const handleStartInference = async () => {
     if (!selectedEngine || !selectedDataset) return
-    const preprocessing =
-      selectedEngine === "smolvlm2"
-        ? "none"
-        : selectedPreprocessing.length > 0
-          ? selectedPreprocessing[0]
-          : "none"
+    const preprocessing = selectedPreprocessing.length > 0 ? selectedPreprocessing[0] : "none"
 
     try {
       setRunningInference(true)
@@ -252,7 +240,6 @@ export function ModelTestingConsole() {
   // Start batch inference (multiple preprocessing options)
   const handleStartBatchInference = async () => {
     if (!selectedEngine || !selectedDataset || selectedPreprocessing.length < 2) return
-    if (selectedEngine === "smolvlm2") return
 
     try {
       setRunningBatch(true)
@@ -491,9 +478,8 @@ export function ModelTestingConsole() {
 
   const hasActiveJobs = jobs.some((j) => j.status === "running" || j.status === "pending")
   const canRunInference = selectedEngine && selectedDataset && !runningInference && !runningBatch && apiStatus === "online"
-  const supportsPreprocessing = selectedEngine !== "smolvlm2"
-  const canRunBatch = supportsPreprocessing && canRunInference && selectedPreprocessing.length >= 2
-  const showBatchButton = supportsPreprocessing && selectedPreprocessing.length >= 2
+  const canRunBatch = canRunInference && selectedPreprocessing.length >= 2
+  const showBatchButton = selectedPreprocessing.length >= 2
 
   if (!mounted) {
     return <div className="h-full w-full bg-black" />
@@ -767,7 +753,7 @@ export function ModelTestingConsole() {
                 <PreprocessingSelector
                   selectedOptions={selectedPreprocessing}
                   onSelect={setSelectedPreprocessing}
-                  disabled={runningInference || runningBatch || apiStatus !== "online" || !supportsPreprocessing}
+                  disabled={runningInference || runningBatch || apiStatus !== "online"}
                   accentColor={ACCENT_COLOR}
                 />
 
