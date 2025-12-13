@@ -19,6 +19,15 @@ import pixeltable as pxt
 from pixeltable import Table
 import numpy as np
 import cv2
+import threading
+
+# ============================================================================
+# Global Pixeltable Lock
+# ============================================================================
+# Pixeltable's internal Catalog is NOT thread-safe for concurrent access.
+# We use a global lock to serialize ALL Pixeltable operations to avoid
+# "assert not Env.get().in_xact" errors when multiple async handlers run.
+_PIXELTABLE_LOCK = threading.RLock()
 
 
 # ============================================================================
@@ -31,48 +40,52 @@ def retry_on_db_error(max_retries: int = 3, delay: float = 0.5):
 
     This handles transient PostgreSQL errors like DuplicatePreparedStatement
     that can occur in containerized environments.
+
+    Also acquires _PIXELTABLE_LOCK to serialize all database operations,
+    preventing Pixeltable's internal assertion errors under concurrent access.
     """
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             last_error = None
             for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    # Pixeltable occasionally throws bare AssertionError under contention.
-                    # These often succeed on retry and the exception may have an empty message.
-                    if isinstance(e, AssertionError):
-                        last_error = e
-                        print(f"Pixeltable assertion error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}")
-                        time.sleep(delay * (attempt + 1))
-                        continue
+                with _PIXELTABLE_LOCK:
+                    try:
+                        return func(*args, **kwargs)
+                    except Exception as e:
+                        # Pixeltable occasionally throws bare AssertionError under contention.
+                        # These often succeed on retry and the exception may have an empty message.
+                        if isinstance(e, AssertionError):
+                            last_error = e
+                            print(f"Pixeltable assertion error (attempt {attempt + 1}/{max_retries}): {type(e).__name__}")
+                            time.sleep(delay * (attempt + 1))
+                            continue
 
-                    error_str = str(e).lower()
-                    # Check if this is a retryable database error
-                    if any(err in error_str for err in [
-                        'duplicatepreparedstatement',
-                        'prepared statement',
-                        'already exists',
-                        'lost synchronization',
-                        'connection',
-                        'psycopg',
-                        'resourceclosed',        # SQLAlchemy ResourceClosedError
-                        'result object',         # "This result object does not return rows"
-                        'closed automatically',  # "has been closed automatically"
-                        'cursor',                # Cursor-related errors
-                        'invalidrequesterror',   # SQLAlchemy invalid request
-                        'deadlock',              # deadlock detected
-                        'could not serialize',   # serialization failure
-                        'serialization failure',
-                        'lock timeout',
-                        'too many connections',
-                    ]):
-                        last_error = e
-                        print(f"Pixeltable DB error (attempt {attempt + 1}/{max_retries}): {e}")
-                        time.sleep(delay * (attempt + 1))  # Exponential backoff
-                        continue
-                    raise  # Re-raise non-retryable errors
+                        error_str = str(e).lower()
+                        # Check if this is a retryable database error
+                        if any(err in error_str for err in [
+                            'duplicatepreparedstatement',
+                            'prepared statement',
+                            'already exists',
+                            'lost synchronization',
+                            'connection',
+                            'psycopg',
+                            'resourceclosed',        # SQLAlchemy ResourceClosedError
+                            'result object',         # "This result object does not return rows"
+                            'closed automatically',  # "has been closed automatically"
+                            'cursor',                # Cursor-related errors
+                            'invalidrequesterror',   # SQLAlchemy invalid request
+                            'deadlock',              # deadlock detected
+                            'could not serialize',   # serialization failure
+                            'serialization failure',
+                            'lock timeout',
+                            'too many connections',
+                        ]):
+                            last_error = e
+                            print(f"Pixeltable DB error (attempt {attempt + 1}/{max_retries}): {e}")
+                            time.sleep(delay * (attempt + 1))  # Exponential backoff
+                            continue
+                        raise  # Re-raise non-retryable errors
             # All retries exhausted
             raise last_error
         return wrapper
