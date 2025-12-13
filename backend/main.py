@@ -402,7 +402,7 @@ class StartInferenceRequest(BaseModel):
 
 class StartBatchInferenceRequest(BaseModel):
     """Request body for starting batch inference with multiple preprocessing options."""
-    engine: str = Field(..., description="OCR engine: 'easyocr' or 'paddleocr' (batch preprocessing)")
+    engine: str = Field(..., description="OCR engine: 'easyocr', 'paddleocr', or 'smolvlm2' (batch preprocessing)")
     dataset_version: str = Field(..., description="Dataset version (e.g., 'version-1')")
     dataset_name: str = Field(default="default", description="Dataset name")
     preprocessing_options: List[str] = Field(default=["none"], description="List of preprocessing types to run")
@@ -871,7 +871,7 @@ async def start_inference(request: StartInferenceRequest):
             detail=f"Dataset not found: {request.dataset_version}"
         )
 
-    preprocessing = "none" if request.engine == "smolvlm2" else (request.preprocessing or "none")
+    preprocessing = request.preprocessing or "none"
 
     # Get service and create job in main process
     try:
@@ -1017,15 +1017,10 @@ async def start_batch_inference(request: StartBatchInferenceRequest):
     to avoid Pixeltable concurrency conflicts.
     """
     # Validate engine
-    if request.engine == "smolvlm2":
+    if request.engine not in ("easyocr", "paddleocr", "smolvlm2"):
         raise HTTPException(
             status_code=400,
-            detail="SmolVLM2 is an end-to-end model and does not support preprocessing batch runs. Use /inference/start instead."
-        )
-    if request.engine not in ("easyocr", "paddleocr"):
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid engine: {request.engine}. Must be 'easyocr' or 'paddleocr'"
+            detail=f"Invalid engine: {request.engine}. Must be 'easyocr', 'paddleocr', or 'smolvlm2'"
         )
 
     # Find dataset
