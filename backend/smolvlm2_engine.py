@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import ast
 from typing import Dict, Optional
 
 from inference_sdk import InferenceHTTPClient
@@ -85,16 +86,67 @@ class SmolVLM2Engine:
             response_text = ""
 
             if isinstance(result, dict):
+                # If the payload is already a dict of fields, use it directly.
+                if any((field in result) for field in DETECTION_CLASSES):
+                    for field in DETECTION_CLASSES:
+                        if field in result:
+                            predictions[field] = str(result[field])
+                        else:
+                            field_lower = field.lower().replace(" ", "_")
+                            if field_lower in result:
+                                predictions[field] = str(result[field_lower])
+                    return predictions
+
                 if "response" in result:
+                    if isinstance(result["response"], dict):
+                        parsed = result["response"]
+                        for field in DETECTION_CLASSES:
+                            if field in parsed:
+                                predictions[field] = str(parsed[field])
+                                continue
+                            field_lower = field.lower().replace(" ", "_")
+                            if field_lower in parsed:
+                                predictions[field] = str(parsed[field_lower])
+                        return predictions
                     response_text = str(result["response"])
                 elif "output" in result:
+                    if isinstance(result["output"], dict):
+                        parsed = result["output"]
+                        for field in DETECTION_CLASSES:
+                            if field in parsed:
+                                predictions[field] = str(parsed[field])
+                                continue
+                            field_lower = field.lower().replace(" ", "_")
+                            if field_lower in parsed:
+                                predictions[field] = str(parsed[field_lower])
+                        return predictions
                     response_text = str(result["output"])
                 elif "text" in result:
+                    if isinstance(result["text"], dict):
+                        parsed = result["text"]
+                        for field in DETECTION_CLASSES:
+                            if field in parsed:
+                                predictions[field] = str(parsed[field])
+                                continue
+                            field_lower = field.lower().replace(" ", "_")
+                            if field_lower in parsed:
+                                predictions[field] = str(parsed[field_lower])
+                        return predictions
                     response_text = str(result["text"])
                 elif "predictions" in result:
                     preds = result["predictions"]
                     if isinstance(preds, list) and len(preds) > 0:
                         if isinstance(preds[0], dict) and "response" in preds[0]:
+                            if isinstance(preds[0]["response"], dict):
+                                parsed = preds[0]["response"]
+                                for field in DETECTION_CLASSES:
+                                    if field in parsed:
+                                        predictions[field] = str(parsed[field])
+                                        continue
+                                    field_lower = field.lower().replace(" ", "_")
+                                    if field_lower in parsed:
+                                        predictions[field] = str(parsed[field_lower])
+                                return predictions
                             response_text = str(preds[0]["response"])
                         elif isinstance(preds[0], str):
                             response_text = preds[0]
@@ -124,6 +176,20 @@ class SmolVLM2Engine:
                             if field_lower in parsed:
                                 predictions[field] = str(parsed[field_lower])
                 except json.JSONDecodeError:
+                    # Sometimes models return python-style dict strings (single quotes). Try literal_eval.
+                    try:
+                        parsed_obj = ast.literal_eval(cleaned)
+                        if isinstance(parsed_obj, dict):
+                            for field in DETECTION_CLASSES:
+                                if field in parsed_obj:
+                                    predictions[field] = str(parsed_obj[field])
+                                    continue
+                                field_lower = field.lower().replace(" ", "_")
+                                if field_lower in parsed_obj:
+                                    predictions[field] = str(parsed_obj[field_lower])
+                            return predictions
+                    except Exception:
+                        pass
                     # Fallback: attempt "Field: value" extraction
                     for field in DETECTION_CLASSES:
                         # Avoid literal '}' in an f-string pattern; keep the value capture permissive.
