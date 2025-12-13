@@ -31,3 +31,11 @@ pydantic>=2.0.0
 
 # AWS S3
 boto3>=1.34.0
+
+# Super-Resolution (ISR library)
+# NOTE: ISR 2.2.0 requires tensorflow==2.0.0, which is no longer available.
+# We install a compatible TensorFlow version manually.
+# ISR will be installed via pip install --no-deps in the Dockerfile.
+tensorflow>=2.12.0,<2.16.0
+imageio>=2.9.0
+h5py>=2.10.0

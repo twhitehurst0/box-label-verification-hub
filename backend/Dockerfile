@@ -23,8 +23,10 @@ COPY OCR_scripts/requirements.txt ./OCR_scripts/
 
 # Install Python dependencies from both requirements files
 # Also uninstall uvloop to prevent conflict with Pixeltable's nest_asyncio
+# ISR is installed separately with --no-deps because it requires an old TensorFlow version
 RUN pip install --no-cache-dir -r backend/requirements.txt && \
     pip install --no-cache-dir -r OCR_scripts/requirements.txt && \
+    pip install --no-cache-dir --no-deps ISR>=2.2.0 && \
     pip uninstall -y uvloop || true
 
 # Copy application code - both backend and OCR_scripts
