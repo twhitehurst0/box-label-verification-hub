@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion"
 import { EngineSelector } from "./engine-selector"
 import { DatasetSelector } from "./dataset-selector"
 import { PreprocessingSelector } from "./preprocessing-selector"
+import { SuperResSelector } from "./superres-selector"
 import { InferenceButton } from "./inference-button"
 import { RunAllButton } from "./run-all-button"
 import { JobsTable } from "./jobs-table"
@@ -33,6 +34,7 @@ export function ModelTestingConsole() {
   const [selectedEngine, setSelectedEngine] = useState<OCREngine | null>(null)
   const [selectedDataset, setSelectedDataset] = useState<string | null>(null)
   const [selectedPreprocessing, setSelectedPreprocessing] = useState<PreprocessingType[]>(["none"])
+  const [selectedSuperRes, setSelectedSuperRes] = useState<PreprocessingType | null>(null)
 
   // Data state
   const [datasets, setDatasets] = useState<TestDataset[]>([])
@@ -191,7 +193,10 @@ export function ModelTestingConsole() {
   // Start inference (single preprocessing option)
   const handleStartInference = async () => {
     if (!selectedEngine || !selectedDataset) return
-    const preprocessing = selectedPreprocessing.length > 0 ? selectedPreprocessing[0] : "none"
+    // If super-resolution is selected, use that; otherwise use the first preprocessing option
+    const preprocessing = selectedSuperRes
+      ? selectedSuperRes
+      : (selectedPreprocessing.length > 0 ? selectedPreprocessing[0] : "none")
 
     try {
       setRunningInference(true)
@@ -753,6 +758,18 @@ export function ModelTestingConsole() {
                 <PreprocessingSelector
                   selectedOptions={selectedPreprocessing}
                   onSelect={setSelectedPreprocessing}
+                  disabled={runningInference || runningBatch || apiStatus !== "online" || selectedSuperRes !== null}
+                  accentColor={ACCENT_COLOR}
+                />
+
+                {/* Super-Resolution selector (separate block) */}
+                <SuperResSelector
+                  selectedOption={selectedSuperRes}
+                  onSelect={(sr) => {
+                    setSelectedSuperRes(sr)
+                    // When SR is selected, reset preprocessing to none since SR replaces it
+                    if (sr) setSelectedPreprocessing(["none"])
+                  }}
                   disabled={runningInference || runningBatch || apiStatus !== "online"}
                   accentColor={ACCENT_COLOR}
                 />

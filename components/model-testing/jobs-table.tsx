@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from "react"
 import { motion, AnimatePresence } from "framer-motion"
 import type { InferenceJob, JobStatus, PreprocessingType } from "@/types/model-testing"
-import { PREPROCESSING_OPTIONS } from "@/types/model-testing"
+import { ALL_PREPROCESSING_OPTIONS } from "@/types/model-testing"
 
 interface JobsTableProps {
   jobs: InferenceJob[]
@@ -53,6 +53,35 @@ export function JobsTable({
   const [sortField, setSortField] = useState<SortField>("date")
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc")
   const scrollContainerRef = useRef<HTMLDivElement>(null)
+
+  // Calculate ETA for running jobs
+  const calculateETA = (job: InferenceJob): string | null => {
+    if (job.status !== "running" || !job.started_at || job.processed_images < 1) {
+      return null
+    }
+
+    const startedMs = parseBackendTimestampMs(job.started_at)
+    if (!startedMs) return null
+
+    const now = Date.now()
+    const elapsedMs = now - startedMs
+    const avgMsPerImage = elapsedMs / job.processed_images
+    const remainingImages = job.total_images - job.processed_images
+
+    if (remainingImages <= 0) return "< 1s"
+
+    const remainingMs = remainingImages * avgMsPerImage
+
+    // Format as human-readable time
+    const seconds = Math.round(remainingMs / 1000)
+    if (seconds < 60) return `~${seconds}s`
+    const minutes = Math.floor(seconds / 60)
+    const remainingSec = seconds % 60
+    if (minutes < 60) return `~${minutes}m ${remainingSec}s`
+    const hours = Math.floor(minutes / 60)
+    const remainingMin = minutes % 60
+    return `~${hours}h ${remainingMin}m`
+  }
 
   const parseBackendTimestampMs = (dateStr: string | null | undefined): number | null => {
     if (!dateStr) return null
@@ -163,7 +192,7 @@ export function JobsTable({
 
   const getPreprocessingName = (id: PreprocessingType | string | undefined) => {
     if (!id || id === "none") return "None"
-    const option = PREPROCESSING_OPTIONS.find((o) => o.id === id)
+    const option = ALL_PREPROCESSING_OPTIONS.find((o) => o.id === id)
     return option?.name || id
   }
 
@@ -557,9 +586,19 @@ export function JobsTable({
                                 }}
                               />
                             </div>
-                            <span className="text-[10px] font-mono text-white/50 w-8 text-right">
-                              {Math.round(job.progress)}%
-                            </span>
+                            <div className="flex flex-col items-end">
+                              <span className="text-[10px] font-mono text-white/50 w-8 text-right">
+                                {Math.round(job.progress)}%
+                              </span>
+                              {job.status === "running" && (() => {
+                                const eta = calculateETA(job)
+                                return eta ? (
+                                  <span className="text-[9px] font-mono text-white/30 whitespace-nowrap">
+                                    ETA: {eta}
+                                  </span>
+                                ) : null
+                              })()}
+                            </div>
                             {job.status === "completed" && (
                               <motion.button
                                 onClick={(e) => {

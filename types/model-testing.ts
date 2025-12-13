@@ -166,7 +166,7 @@ export const DETECTION_CLASSES = [
   "Site Stamp",
 ] as const
 
-// Preprocessing Options
+// Preprocessing Options (standard image preprocessing - NOT including super-resolution)
 export const PREPROCESSING_OPTIONS: PreprocessingOption[] = [
   { id: "none", name: "None (Baseline)", description: "Original image without preprocessing", category: "baseline" },
   { id: "rescale", name: "Rescale 300 DPI", description: "Upscale image for better OCR accuracy", category: "geometric" },
@@ -180,10 +180,19 @@ export const PREPROCESSING_OPTIONS: PreprocessingOption[] = [
   { id: "deskew", name: "Deskew", description: "Rotate to straighten text lines", category: "geometric" },
   { id: "add_border", name: "Add Border", description: "Add 10px white margin around text", category: "geometric" },
   { id: "invert", name: "Invert Colors", description: "Ensure dark text on light background", category: "baseline" },
-  // Super-resolution options (require TensorFlow + ISR)
-  { id: "sr_fast_2x", name: "SR Fast 2x", description: "Super-resolution 2x upscale (fast)", category: "super-resolution" },
-  { id: "sr_quality_2x", name: "SR Quality 2x", description: "Super-resolution 2x upscale (better quality)", category: "super-resolution" },
-  { id: "sr_gans_4x", name: "SR GANS 4x", description: "Super-resolution 4x upscale (best quality, slowest)", category: "super-resolution" },
+]
+
+// Super-Resolution Options (separate from standard preprocessing)
+export const SUPER_RESOLUTION_OPTIONS: PreprocessingOption[] = [
+  { id: "sr_fast_2x", name: "Fast 2x", description: "2x upscale - RDN small (~5-15s/crop)", category: "super-resolution" },
+  { id: "sr_quality_2x", name: "Quality 2x", description: "2x upscale - RDN large (~15-30s/crop)", category: "super-resolution" },
+  { id: "sr_gans_4x", name: "GANS 4x", description: "4x upscale - ESRGAN (~30-60s/crop)", category: "super-resolution" },
+]
+
+// Combined options for backwards compatibility
+export const ALL_PREPROCESSING_OPTIONS: PreprocessingOption[] = [
+  ...PREPROCESSING_OPTIONS,
+  ...SUPER_RESOLUTION_OPTIONS,
 ]
 
 // Category display names for grouping
