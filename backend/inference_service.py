@@ -62,6 +62,7 @@ from pixeltable_schema import (
 
 from preprocessing import preprocess_image
 from smolvlm2_engine import SmolVLM2Engine
+from superres import is_sr_preprocessing, apply_superres
 
 
 @contextlib.contextmanager
@@ -246,10 +247,30 @@ class InferenceService:
             crop: Input image crop as numpy array (BGR format)
             engine: OCR engine to use ('easyocr' or 'paddleocr')
             preprocessing: Preprocessing type to apply before OCR
+                           Supports super-resolution types: 'sr_fast_2x', 'sr_quality_2x', 'sr_gans_4x'
 
         Returns:
             Extracted text from the image crop
         """
+        # Check if super-resolution preprocessing is requested
+        if is_sr_preprocessing(preprocessing):
+            # Convert BGR to RGB for ISR models
+            if len(crop.shape) == 3 and crop.shape[2] == 3:
+                crop_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+            else:
+                crop_rgb = crop
+            
+            # Apply super-resolution
+            print(f"[SR] Applying {preprocessing} to crop shape {crop.shape}")
+            sr_crop_rgb = apply_superres(crop_rgb, preprocessing)
+            
+            # Convert back to BGR for OCR
+            crop = cv2.cvtColor(sr_crop_rgb, cv2.COLOR_RGB2BGR)
+            print(f"[SR] Output shape: {crop.shape}")
+            
+            # No further preprocessing after SR
+            preprocessing = "none"
+        
         # Apply preprocessing before OCR
         processed_crop = preprocess_image(crop, preprocessing)
 

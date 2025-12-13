@@ -127,6 +127,25 @@ def get_available_preprocessing_options() -> List[Dict]:
             "description": "Ensure dark text on light background",
             "category": "baseline"
         },
+        # Super-Resolution options (require TensorFlow + ISR)
+        {
+            "id": "sr_fast_2x",
+            "name": "SR Fast 2x",
+            "description": "Super-resolution 2x upscale (RDN small, fast)",
+            "category": "super-resolution"
+        },
+        {
+            "id": "sr_quality_2x",
+            "name": "SR Quality 2x",
+            "description": "Super-resolution 2x upscale (RDN large, better quality)",
+            "category": "super-resolution"
+        },
+        {
+            "id": "sr_gans_4x",
+            "name": "SR GANS 4x",
+            "description": "Super-resolution 4x upscale (ESRGAN, best quality, slowest)",
+            "category": "super-resolution"
+        },
     ]
 
 

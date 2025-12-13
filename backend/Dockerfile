@@ -41,6 +41,10 @@ ENV PYTHONPATH=/app/backend:/app/OCR_scripts:/app
 ENV PIXELTABLE_HOME=/app/data/pixeltable
 # Prevent uvloop from being used - needed for Pixeltable compatibility
 ENV UVLOOP_USE_LIBUV=0
+# TensorFlow configuration (for ISR super-resolution)
+# Force CPU-only mode to avoid GPU detection warnings on CPU-only instances
+ENV CUDA_VISIBLE_DEVICES=""
+ENV TF_CPP_MIN_LOG_LEVEL=2
 
 # Working directory is the backend
 WORKDIR /app/backend

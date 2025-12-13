@@ -22,8 +22,12 @@ export type PreprocessingType =
   | "deskew"
   | "add_border"
   | "invert"
+  // Super-resolution options
+  | "sr_fast_2x"
+  | "sr_quality_2x"
+  | "sr_gans_4x"
 
-export type PreprocessingCategory = "baseline" | "binarization" | "noise" | "morphological" | "geometric"
+export type PreprocessingCategory = "baseline" | "binarization" | "noise" | "morphological" | "geometric" | "super-resolution"
 
 export interface PreprocessingOption {
   id: PreprocessingType
@@ -176,6 +180,10 @@ export const PREPROCESSING_OPTIONS: PreprocessingOption[] = [
   { id: "deskew", name: "Deskew", description: "Rotate to straighten text lines", category: "geometric" },
   { id: "add_border", name: "Add Border", description: "Add 10px white margin around text", category: "geometric" },
   { id: "invert", name: "Invert Colors", description: "Ensure dark text on light background", category: "baseline" },
+  // Super-resolution options (require TensorFlow + ISR)
+  { id: "sr_fast_2x", name: "SR Fast 2x", description: "Super-resolution 2x upscale (fast)", category: "super-resolution" },
+  { id: "sr_quality_2x", name: "SR Quality 2x", description: "Super-resolution 2x upscale (better quality)", category: "super-resolution" },
+  { id: "sr_gans_4x", name: "SR GANS 4x", description: "Super-resolution 4x upscale (best quality, slowest)", category: "super-resolution" },
 ]
 
 // Category display names for grouping
@@ -185,6 +193,7 @@ export const PREPROCESSING_CATEGORIES: Record<PreprocessingCategory, string> = {
   noise: "Noise Removal",
   morphological: "Morphological",
   geometric: "Geometric",
+  "super-resolution": "Super-Resolution",
 }
 
 // Batch Inference Types
