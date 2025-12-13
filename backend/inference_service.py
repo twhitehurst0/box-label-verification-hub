@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 import json
 import time
+import tempfile
 
 import pixeltable as pxt
 import numpy as np
@@ -566,8 +567,35 @@ class InferenceService:
 
                     try:
                         with _time_limit(image_timeout_s, f"timeout: smolvlm2_image {image_filename}"):
-                            with _time_limit(vlm_timeout_s, f"timeout: smolvlm2_infer {image_filename}"):
-                                predictions = vlm.extract_all_fields(str(image_path))
+                            # Apply preprocessing to the FULL image if requested (VLM still returns JSON keyed by classes).
+                            inference_input_path = str(image_path)
+                            tmp_path: Optional[str] = None
+                            try:
+                                if preprocessing and preprocessing != "none":
+                                    img = cv2.imread(str(image_path))
+                                    if img is None:
+                                        raise ValueError(f"Could not load image: {image_path}")
+                                    processed = preprocess_image(img, preprocessing)
+                                    if processed is None:
+                                        processed = img
+                                    if hasattr(processed, "dtype") and processed.dtype != np.uint8:
+                                        processed = np.clip(processed, 0, 255).astype(np.uint8)
+                                    tmp = tempfile.NamedTemporaryFile(prefix="smolvlm2_", suffix=".png", delete=False)
+                                    tmp_path = tmp.name
+                                    tmp.close()
+                                    ok = cv2.imwrite(tmp_path, processed)
+                                    if not ok:
+                                        raise RuntimeError("Failed to write preprocessed temp image")
+                                    inference_input_path = tmp_path
+
+                                with _time_limit(vlm_timeout_s, f"timeout: smolvlm2_infer {image_filename}"):
+                                    predictions = vlm.extract_all_fields(inference_input_path)
+                            finally:
+                                if tmp_path:
+                                    try:
+                                        os.remove(tmp_path)
+                                    except Exception:
+                                        pass
                     except Exception as img_error:
                         img_tb = traceback.format_exc()
                         print(
