@@ -189,6 +189,7 @@ export function ResultsViewer({
                     <VisualsView
                       images={results.images}
                       datasetVersion={results.job.dataset_version}
+                      engine={results.job.engine}
                       accentColor={accentColor}
                     />
                   </motion.div>
@@ -510,10 +511,12 @@ function getClassColor(className: string): string {
 function VisualsView({
   images,
   datasetVersion,
+  engine,
   accentColor,
 }: {
   images: ImageResult[]
   datasetVersion: string
+  engine: string
   accentColor: string
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0)
@@ -816,40 +819,54 @@ function VisualsView({
               )
             })}
           </div>
-
-          {/* OCR results for detected fields */}
-          <div className="mt-4 pt-4" style={{ borderTop: "1px solid rgba(255,255,255,0.05)" }}>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-white/40 mb-3">
-              OCR Results
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              {Object.entries(selectedImage.ocr_results).map(([className, text]) => {
-                const color = getClassColor(className)
-                return (
-                  <div
-                    key={className}
-                    className="rounded-lg p-3"
-                    style={{
-                      background: "rgba(0,0,0,0.3)",
-                      borderLeft: `3px solid ${color}`,
-                    }}
-                  >
-                    <div
-                      className="text-[9px] font-mono uppercase tracking-wider mb-1"
-                      style={{ color }}
-                    >
-                      {className}
-                    </div>
-                    <div className="text-white/80 text-xs break-words font-mono">
-                      {text || <span className="text-white/20 italic">—</span>}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
         </div>
       )}
+
+      {/* OCR Results (always show, even when there are no detections/bounding boxes) */}
+      <div
+        className="rounded-xl p-4"
+        style={{
+          background: "linear-gradient(135deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)",
+          border: "1px solid rgba(255,255,255,0.05)",
+        }}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-white/40">
+            OCR Results
+          </div>
+          {engine === "smolvlm2" && selectedImage.detections.length === 0 && (
+            <div className="text-[9px] font-mono text-white/30">
+              SmolVLM2: JSON field results only (no bounding boxes)
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {Object.entries(selectedImage.ocr_results || {}).map(([className, text]) => {
+            const color = getClassColor(className)
+            return (
+              <div
+                key={className}
+                className="rounded-lg p-3"
+                style={{
+                  background: "rgba(0,0,0,0.3)",
+                  borderLeft: `3px solid ${color}`,
+                }}
+              >
+                <div
+                  className="text-[9px] font-mono uppercase tracking-wider mb-1"
+                  style={{ color }}
+                >
+                  {className}
+                </div>
+                <div className="text-white/80 text-xs break-words font-mono">
+                  {text || <span className="text-white/20 italic">—</span>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
 
       {/* Navigation hint */}
       <div className="text-center text-white/30 text-[10px] font-mono">
